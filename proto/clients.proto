@@ -1,0 +1,43 @@
+syntax="proto3";
+package emergency;
+import "common.proto";
+
+message RegisterRequest{
+  string phone_num=1;
+}
+
+
+message RegisterResponse{
+  Client client=1;
+  bool success=2;
+  string message=3;
+}
+
+message EmergencyRequest{
+  string client_id=1;
+  string initial_message=2;
+}
+
+message EmergencyResponse{
+  string session_id=1;
+  EmergencyType routed_to=2;
+  RequestStatus status=3;
+  string info=4;
+}
+
+message WatchSessionRequest{
+  string client_id=1;
+  string session_id=2;
+}
+
+message SessionUpdate{
+  Session session=1;
+  string notification=2;
+}
+
+service ClientService{
+  rpc Register (RegisterRequest) returns (RegisterResponse);
+  rpc RequestEmergency (EmergencyRequest) returns (EmergencyResponse);
+  rpc WatchSessionStatus (WatchSessionRequest) returns (stream SessionUpdate);
+  rpc ChatStream (stream ChatMessage) returns (stream ChatMessage);
+}

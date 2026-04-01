@@ -1,0 +1,56 @@
+syntax = "proto3";
+package emergency;
+import "common.proto";
+
+message RouteRequest{
+  string session_id      = 1;
+  string initial_message = 2;
+}
+
+message RouteResponse{
+  string session_id=1;
+  EmergencyType routed_to=2;
+  bool success=3;
+}
+
+message GetQueueRequest{
+    EmergencyType department=1;
+    RequestStatus filter=2;
+}
+
+message GetQueueResponse{
+    repeated Session PENDING=1;
+    int32 total_pending=2;
+    int32 total_active=3;
+}
+
+message UpdateSessionRequest{
+    string session_id=1;
+    RequestStatus new_status=2;
+    string agent_id=3;
+}
+
+message UpdateSessioResponse{
+    Session updated_session=1;
+    bool success=2;
+}
+
+message BanClientRequest{
+    string agent_id=1;
+    string client_id=2;
+    string session_id=3;
+    string reason=4;
+}
+
+message BanClientResponse{
+    bool success=1;
+    Client client=2;
+}
+
+service DispatchService{
+    rpc RouteEmergency (RouteRequest) returns (RouteResponse);
+    rpc GetQueue (GetQueueRequest) returns (GetQueueResponse);
+    rpc UpdateSessionStatus (UpdateSessionRequest) returns (UpdateSessionResponse);
+    rpc BanClient (BanClientRequest) returns (BanClientResponse);
+    rpc WatchAllSessions (GetQueueRequest) returns (stream Session);
+}

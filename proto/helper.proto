@@ -1,0 +1,64 @@
+syntax = "proto3";
+package emergency;
+import "common.proto";
+
+message HelperLoginRequest{
+    string agent_id=1;
+    string password=2;
+    EmergencyType department=3;
+}
+
+message WatchQueueRequest{
+    string agent_id=1;
+    EmergencyType department=2;
+}
+
+message QueueUpdate{
+    repeated Session PENDING=1;
+    Session  new_session=2;
+    string event=3;
+}
+
+message AssignRequest{
+    string agent_id=1;
+    string session_id=2;
+}
+
+message AssignResponse{
+    Session session=1;
+    bool success=2;
+    string message=3;
+}
+
+enum EndReason{
+    DONE=0;
+    BANNED=1;
+}
+
+message EndSessionRequest{
+    string agent_id=1;
+    string session_id=2;
+    EndReason reason=3;
+    string note=4;
+}
+
+message HelperLoginResponse {
+  HelperAgent agent=1;
+  string token=2;
+  bool success=3;
+  string message=4;
+}
+
+message EndSessionResponse {
+  bool success=1;
+  RequestStatus final_status=2;
+  string message=3;
+}
+
+service HelperService{
+    rpc Login (HelperLoginRequest) returns (HelperLoginResponse);
+    rpc WatchQueue (WatchQueueRequest) returns (stream QueueUpdate);
+    rpc AssignClient (AssignRequest) returns (AssignResponse);
+    rpc ChatStream (stream ChatMessage) returns (stream ChatMessage);
+    rpc EndSession (EndSessionRequest) returns (EndSessionResponse);
+}

@@ -1,0 +1,51 @@
+syntax="proto3";
+package emergency;
+
+enum EmergencyType{
+    UNKNOWN=0;
+    FIRE=1;
+    MEDICAL=2;
+    POLICE=3;
+}
+
+enum RequestStatus{
+    PENDING=0;
+    ONGOING=1;
+    DONE=2;
+    BANNED=3;
+}
+
+message Client {
+  string client_id =1;
+  string phone_num=2;
+  bool is_banned=3;
+}
+
+message HelperAgent {
+  string agent_id=1;
+  string name=2;
+  EmergencyType department = 3;
+}
+
+message Session{
+    string session_id=1;
+    Client client=2;
+    HelperAgent assigned_agent=3;
+    EmergencyType type=4;
+    RequestStatus status=5;
+    string initial_message=6;
+    int64 created_at=7;
+}
+
+enum SenderRole{
+    CLIENT=0;
+    HELPER=1;
+}
+
+message ChatMessage{
+    string session_id=1;
+    string sender_id=2;
+    SenderRole sender_role=3;
+    string content=4;
+    int64 timestamp=5;
+}
