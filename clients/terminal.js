@@ -1,231 +1,161 @@
-// clients/terminal.js
-'use strict';
-
-const readline = require('readline');
-const { register, requestEmergency, watchSessionStatus, chatStream } = require('./index');
-
-// ─── Terminal helpers ────────────────────────────────────────────────────────
-const C = {
-  reset:  '\x1b[0m',
-  bold:   '\x1b[1m',
-  red:    '\x1b[31m',
-  green:  '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue:   '\x1b[34m',
-  magenta:'\x1b[35m',
-  cyan:   '\x1b[36m',
-  gray:   '\x1b[90m',
-};
-
-const fmt  = (color, msg) => `${color}${msg}${C.reset}`;
-const info = (msg) => console.log(`${C.cyan}[INFO]${C.reset} ${msg}`);
-const ok   = (msg) => console.log(`${C.green}[✓]${C.reset} ${msg}`);
-const err  = (msg) => console.log(`${C.red}[✗]${C.reset} ${msg}`);
-const warn = (msg) => console.log(`${C.yellow}[!]${C.reset} ${msg}`);
-const sep  = ()    => console.log(fmt(C.gray, '─'.repeat(44)));
-
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const ask = (q) => new Promise(resolve => rl.question(q, resolve));
-
-// ─── App state ───────────────────────────────────────────────────────────────
-const state = {
-  client_id:  null,
-  phone_num:  null,
-  session_id: null,
-};
-
-// ─── Screens ─────────────────────────────────────────────────────────────────
-function drawBanner() {
-  console.clear();
-  console.log(fmt(C.red, '╔══════════════════════════════════════════╗'));
-  console.log(fmt(C.red, '║') + fmt(C.bold, '       🚨  EMERGENCY CALL CENTER         ') + fmt(C.red, '║'));
-  console.log(fmt(C.red, '║') + fmt(C.cyan, '            CLIENT TERMINAL              ') + fmt(C.red, '║'));
-  console.log(fmt(C.red, '╚══════════════════════════════════════════╝'));
-  console.log('');
-}
-
-function printStatus() {
-  if (state.client_id) {
-    info(`Phone    : ${fmt(C.yellow, state.phone_num)}`);
-    info(`Client ID: ${fmt(C.yellow, state.client_id.slice(0, 8) + '...')}`);
-  }
-  if (state.session_id) {
-    info(`Session  : ${fmt(C.magenta, state.session_id.slice(0, 8) + '...')}`);
-  }
-}
-
-// ─── 1. Register ─────────────────────────────────────────────────────────────
-async function doRegister() {
-  sep();
-  console.log(fmt(C.bold, ' REGISTER NEW CLIENT'));
-  sep();
-  const phone = (await ask(' Phone number : ')).trim();
-  if (!phone) return warn('Phone number cannot be empty.');
-
-  try {
-    const res = await register(phone);
-    if (res.success) {
-      state.client_id = res.client.client_id;
-      state.phone_num = res.client.phone_num;
-      ok(`Registered!  ID: ${fmt(C.yellow, state.client_id)}`);
-    } else {
-      err(res.message);
-    }
-  } catch (e) {
-    err(`Connection error: ${e.message}`);
-  }
-}
-
-// ─── 2. Request Emergency ────────────────────────────────────────────────────
-async function doRequestEmergency() {
-  if (!state.client_id) return warn('Please register first (option 1).');
-  sep();
-  console.log(fmt(C.bold, ' REQUEST EMERGENCY'));
-  sep();
-  console.log(' Auto-routing keywords:');
-  console.log('   🔥  fire  / burn  / smoke');
-  console.log('   🏥  medical / ambulance / hurt / injured');
-  console.log('   👮  police / crime / robbery / attack');
-  console.log('');
-
-  const msg = (await ask(' Describe your emergency: ')).trim();
-  if (!msg) return warn('Message cannot be empty.');
-
-  try {
-    const res = await requestEmergency(state.client_id, msg);
-    state.session_id = res.session_id;
-
-    ok(`Emergency submitted!`);
-    info(`Session ID : ${fmt(C.yellow, res.session_id)}`);
-    info(`Routed to  : ${fmt(C.magenta, res.routed_to)}`);
-    info(`Status     : ${fmt(C.cyan, res.status)}`);
-  } catch (e) {
-    err(`Failed: ${e.message}`);
-  }
-}
-
-// ─── 3. Watch Session ────────────────────────────────────────────────────────
-async function doWatchSession() {
-  if (!state.client_id)  return warn('Please register first.');
-  if (!state.session_id) return warn('No active session — request an emergency first (option 2).');
-  sep();
-  console.log(fmt(C.bold, ' WATCHING SESSION STATUS'));
-  sep();
-  info(`Session: ${state.session_id}`);
-  info('Updates will appear below. Press Enter to stop.\n');
-
-  const stream = watchSessionStatus(state.client_id, state.session_id);
-
-  stream.on('data', upd => {
-    console.log('');
-    console.log(fmt(C.cyan, '── Session Update ──────────────────────────'));
-    if (upd.session) {
-      const s = upd.session;
-      console.log(`  Status : ${fmt(C.yellow, s.status)}`);
-      console.log(`  Type   : ${fmt(C.magenta, s.type)}`);
-      if (s.assigned_agent?.agent_id)
-        console.log(`  Agent  : ${fmt(C.green, `${s.assigned_agent.name} (${s.assigned_agent.agent_id})`)}`);
-    }
-    if (upd.notification)
-      console.log(`  Notice : ${upd.notification}`);
-    console.log(fmt(C.cyan, '────────────────────────────────────────────'));
-  });
-
-  stream.on('error', e => err(`Stream error: ${e.message}`));
-  stream.on('end',   () => info('Session stream closed by server.'));
-
-  await ask('');
-  stream.cancel();
-}
-
-// ─── 4. Chat ─────────────────────────────────────────────────────────────────
-async function doChat() {
-  if (!state.client_id)  return warn('Please register first.');
-  if (!state.session_id) return warn('No active session — request an emergency first (option 2).');
-  sep();
-  console.log(fmt(C.bold, ' LIVE CHAT WITH HELPER'));
-  sep();
-  info(`Session: ${state.session_id}`);
-  info('Type a message and press Enter.  Type "exit" to leave.\n');
-
-  const stream = chatStream();
-
-  stream.on('data', msg => {
-    if (msg.sender_role !== 'CLIENT' && msg.content !== '__CONNECT__') {
-      // Clear the prompt line and print the incoming message above it
-      process.stdout.clearLine?.(0);
-      process.stdout.cursorTo?.(0);
-      console.log(`${fmt(C.blue, '[Helper]')} ${msg.content}`);
-      process.stdout.write('You: ');
-    }
-  });
-  stream.on('error', e => err(`Chat error: ${e.message}`));
-  stream.on('end',   () => info('\nChat stream ended.'));
-
-  // Announce ourselves so the server maps role → stream
-  stream.write({
-    session_id:  state.session_id,
-    sender_id:   state.client_id,
-    sender_role: 'CLIENT',
-    content:     '__CONNECT__',
-    timestamp:   Date.now().toString(),
-  });
-
-  // Message loop
-  while (true) {
-    const line = (await ask('You: ')).trim();
-    if (line.toLowerCase() === 'exit') break;
-    if (!line) continue;
-    stream.write({
-      session_id:  state.session_id,
-      sender_id:   state.client_id,
-      sender_role: 'CLIENT',
-      content:     line,
-      timestamp:   Date.now().toString(),
-    });
-  }
-  stream.end();
-  info('Left the chat.');
-}
-
-// ─── Main menu ───────────────────────────────────────────────────────────────
-async function menu() {
-  while (true) {
-    drawBanner();
-    printStatus();
-    console.log('');
-    console.log(fmt(C.bold, ' MENU'));
-    sep();
-    console.log('  1.  Register');
-    console.log('  2.  Request Emergency');
-    console.log('  3.  Watch Session Status');
-    console.log('  4.  Chat with Helper');
-    console.log('  5.  Exit');
-    sep();
-
-    const choice = (await ask(' Choice: ')).trim();
-    console.log('');
-
-    switch (choice) {
-      case '1': await doRegister();         break;
-      case '2': await doRequestEmergency(); break;
-      case '3': await doWatchSession();     break;
-      case '4': await doChat();             break;
-      case '5':
-        info('Goodbye. Stay safe!');
-        rl.close();
-        process.exit(0);
-      default:
-        warn('Invalid choice — please enter 1–5.');
-    }
-
-    await ask('\nPress Enter to continue...');
-  }
-}
-
-// ─── Entry point ─────────────────────────────────────────────────────────────
-menu().catch(e => {
-  err(`Fatal error: ${e.message}`);
-  rl.close();
-  process.exit(1);
+import * as clientService from "./index.js";import { setTimeout } from 'node:timers/promises';
+import readline from "readline";
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
 });
+let clientState = {
+  activeSession: null,
+  currentStatus: "N/A",
+  lastInfo: "-",
+  initialMessage: "-"
+};
+
+async function showMainMenu() {
+  console.clear();
+  await setTimeout(200);
+  console.log(`\n=== CLIENT DASHBOARD ===`);
+  console.log(`ID    : ${clientService.mylocalprofile.client_id}`);
+  console.log(`Phone : ${clientService.mylocalprofile.phone_num}`);
+  if (clientState.activeSession) {
+    console.log(`Request : ${clientState.initialMessage}`);
+    console.log(`Status  : [${clientState.currentStatus}] - ${clientState.lastInfo}`);
+  } else {
+    console.log(`Status  : Tidak ada laporan aktif.`);
+  }
+  console.log(`------------------------`);
+  console.log("1. Minta Bantuan (Emergency)");
+  console.log("2. Refresh Tampilan");
+  console.log("3. Keluar");
+  console.log("4. Batalkan Sesi");
+  
+  rl.question("\nPilih Menu: ", (choice) => {
+    switch (choice) {
+      case '1':
+        if (clientState.activeSession) {
+          console.log("\n[!] Gagal: Selesaikan atau batalkan sesi aktif terlebih dahulu.");
+          return setTimeout(1500).then(showMainMenu);
+        }
+        rl.question("\nApa keadaan darurat Anda? ", (msg) => {
+          clientService.requestEmergency(msg, 3, (err, res) => {
+            if (err || !res.session_id) {
+               console.log("\n[!] Gagal mengirim permintaan.");
+               setTimeout(1500).then(showMainMenu);
+            } else {
+               // --- TAMBAHKAN TIGA BARIS INI ---
+               clientState.activeSession = res.session_id; 
+               clientState.initialMessage = msg;
+               clientState.currentStatus = "PENDING";
+               // --------------------------------
+               
+               startStatusWatcher();
+               showMainMenu();
+            }
+          });
+        });
+        break;
+      case '2':
+        showMainMenu();
+        break;
+      case '3':
+        console.log("Terima kasih.");
+        process.exit();
+        break;
+      case '4': // LOGIKA CANCEL
+        const sessionToCancel = clientService.getCurrentSessionId();
+        if (!sessionToCancel) {
+          console.log("\n[!] Anda tidak memiliki permintaan aktif.");
+          console.clear();
+          return showMainMenu();
+        }
+
+        rl.question(`\nBatalkan sesi ${sessionToCancel}? (ya/tidak): `, (confirm) => {
+          if (confirm.toLowerCase() === 'ya') {
+            clientService.cancelEmergency((err, res) => {
+              if (err || !res.success) {
+                console.log(`\n  Gagal: ${res ? res.message : "Server error"}`);
+              } else {
+                console.log(`\n  Sesi berhasil dibatalkan.`);
+              }
+              console.clear();
+              showMainMenu();
+            });
+          } else {
+            console.clear();
+            showMainMenu();
+          }
+        });
+        break;
+      default:
+        console.clear();
+        showMainMenu();
+        break;
+    }
+  });
+}
+
+function startStatusWatcher() {
+  clientService.watchMyStatus((update) => {
+    if (update && update.session) { 
+      // Mapping untuk menangani Enum yang datang sebagai String atau Number
+      const statusMap = {
+        "PENDING": 0, 0: 0,
+        "ONGOING": 1, 1: 1,
+        "DONE": 2, 2: 2,
+        "BANNED": 3, 3: 3
+      };
+      
+      const statusNames = ["PENDING", "ONGOING", "DONE", "BANNED"];
+      const sessionData = update.session;
+      
+      // Ambil nilai mentah dari status
+      const rawStatus = sessionData.status !== undefined ? sessionData.status : sessionData.Status;
+      
+      // Konversi ke index angka yang pasti (0-3)
+      const statusIndex = statusMap[rawStatus];
+
+      clientState.activeSession = sessionData.session_id || sessionData.session_id;
+      
+      // Update status ke dashboard
+      clientState.currentStatus = statusNames[statusIndex] !== undefined ? statusNames[statusIndex] : "UNKNOWN";
+      
+      clientState.lastInfo = update.notification || "-";
+
+      showMainMenu();
+
+      // Logika pembersihan sesi
+      if (statusIndex === 2 || statusIndex === 3) {
+        setTimeout(5000).then(() => {
+          clientState.activeSession = null;
+          clientState.initialMessage = "-";
+          showMainMenu();
+        });
+      }
+    }
+  });
+}
+
+function startApp(){
+  console.clear();
+  console.log("=== PENDAFTARAN CLIENT 911 ===");
+  rl.question("Masukkan Nomor Telepon: ", (phone) => {
+    if (!phone) {
+      console.log("nomor telepon tidak ditemukan");
+      return startApp();
+    }
+    clientService.register(phone, (err, response) => {
+      if(err||!response.success){
+        console.log(`registrasi gagal: ${err ? err.message : response.message}`);
+        return startApp();
+      }
+      console.clear();
+      console.log(`Registrasi berhasil`);
+      console.log(`Pesan: ${response.message}`);
+      console.clear();
+      startStatusWatcher();
+      showMainMenu();
+    });
+  });
+}
+
+startApp();

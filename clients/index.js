@@ -1,66 +1,79 @@
-// clients/index.js
-const grpc       = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
-const path       = require('path');
+import grpc from '@grpc/grpc-js';
+import protoLoader from '@grpc/proto-loader';
+const packageDefinition=protoLoader.loadSync([
+  './proto/helper.proto',
+  './proto/clients.proto',
+], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
+const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+const centralStub = new proto.ClientService('localhost:50051', grpc.credentials.createInsecure());
+export let mylocalprofile={
+  client_id: null,
+  phone_num: "089xxxxxxxx"
+};
+export let currentSessionId = null;
 
-const PROTO_DIR = path.join(__dirname, '../proto');
-
-const pkg = grpc.loadPackageDefinition(
-  protoLoader.loadSync(path.join(PROTO_DIR, 'clients.proto'), {
-    keepCase: true,
-    longs:    String,
-    enums:    String,
-    defaults: true,
-    oneofs:   true,
-    includeDirs: [PROTO_DIR],
-  })
-).emergency;
-
-const stub = new pkg.ClientService(
-  'localhost:50051',
-  grpc.credentials.createInsecure()
-);
-
-/**
- * Register a new client.
- * @param {string} phoneNum
- * @returns {Promise<RegisterResponse>}
- */
-function register(phoneNum) {
-  return new Promise((resolve, reject) =>
-    stub.Register({ phone_num: phoneNum }, (err, res) => err ? reject(err) : resolve(res))
-  );
+export function register(phone,callback){
+  const request={
+    phone_num: phone
+  };
+  centralStub.Register(request, (err, response) => {
+    if (!err && response.success) {
+      // Simpan ke memori lokal
+      mylocalprofile.client_id = response.client.client_id;
+      mylocalprofile.phone_num = response.client.phone_num;
+    }
+    callback(err, response);
+  });
 }
 
-/**
- * Request an emergency.
- * @param {string} clientId
- * @param {string} initialMessage
- * @returns {Promise<EmergencyResponse>}
- */
-function requestEmergency(clientId, initialMessage) {
-  return new Promise((resolve, reject) =>
-    stub.RequestEmergency({ client_id: clientId, initial_message: initialMessage },
-      (err, res) => err ? reject(err) : resolve(res))
-  );
+export function requestEmergency(message,type,callback){
+  const request={
+    client_id: mylocalprofile.client_id,
+    initial_message: message,
+  };
+
+  centralStub.RequestEmergency(request, (err, response) => {
+    if (!err && response.session_id) {
+      currentSessionId = response.session_id;
+    }
+    callback(err, response);
+  });
 }
 
-/**
- * Watch a session for status updates (server-streaming).
- * @param {string} clientId
- * @param {string} sessionId
- * @returns {grpc.ClientReadableStream}
- */
-function watchSessionStatus(clientId, sessionId) {
-  return stub.WatchSessionStatus({ client_id: clientId, session_id: sessionId });
+export function cancelEmergency(callback) {
+  if (!currentSessionId) {
+    return callback(new Error("Tidak ada sesi aktif yang bisa dibatalkan"), null);
+  }
+
+  const request = {
+    session_id: currentSessionId,
+    client_id: mylocalprofile.client_id
+  };
+
+  centralStub.CancelEmergency(request, (err, response) => {
+    if (!err && response.success) {
+      currentSessionId = null;
+    }
+    callback(err, response);
+  });
 }
 
-/**
- * Open a bidirectional chat stream.
- * @returns {grpc.ClientDuplexStream}
- */
-function chatStream() {
-  return stub.ChatStream();
+export function getCurrentSessionId() {
+  return currentSessionId;
 }
 
-module.exports = { register, requestEmergency, watchSessionStatus, chatStream };
+export function watchMyStatus(onUpdate) {
+  const stream = centralStub.WatchSessionStatus({
+    client_id: mylocalprofile.client_id
+  });
+
+  stream.on('data', (response) => {
+    if (onUpdate) onUpdate(response);
+  });
+
+  stream.on('error', (err) => {
+    // Diamkan jika error karena cancel
+  });
+  
+  return stream;
+}

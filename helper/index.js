@@ -1,84 +1,88 @@
-// helper/index.js
-const grpc        = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
-const path        = require('path');
+import grpc from '@grpc/grpc-js';
+import protoLoader from '@grpc/proto-loader';
+const packageDefinition=protoLoader.loadSync([
+  './proto/helper.proto',
+], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
+const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+const centralStub = new proto.HelperService('localhost:50051', grpc.credentials.createInsecure());
+const activeSessions = new Map();
+let helperNode = null;
 
-const PROTO_DIR = path.join(__dirname, '../proto');
+export function startHelper(address,onClientAssigned){
+  const helperNode=new grpc.Server();
+  helperNode.addService(proto.HelperService.service, {
+    AssignClient:(call, callback)=>{
+      const {session_id, agent_id}=call.request;
 
-const pkg = grpc.loadPackageDefinition(
-  protoLoader.loadSync(path.join(PROTO_DIR, 'helper.proto'), {
-    keepCase: true,
-    longs:    String,
-    enums:    String,
-    defaults: true,
-    oneofs:   true,
-    includeDirs: [PROTO_DIR],
-  })
-).emergency;
+      activeSessions.set(session_id, agent_id);
 
-const stub = new pkg.HelperService(
-  'localhost:50051',
-  grpc.credentials.createInsecure()
-);
+      if (onClientAssigned) onClientAssigned(session_id);
 
-/**
- * Login as a helper agent.
- * @param {string} agentId
- * @param {string} password
- * @param {string} department  FIRE | MEDICAL | POLICE
- * @returns {Promise<HelperLoginResponse>}
- */
-function login(agentId, password, department) {
-  return new Promise((resolve, reject) =>
-    stub.Login({ agent_id: agentId, password, department },
-      (err, res) => err ? reject(err) : resolve(res))
-  );
+      callback(null, {
+        success:true,
+        message: "Client assigned to local node",
+        session: { session_id: session_id, status: "ONGOING" }
+      });
+    }
+  });
+  
+  const port = address.split(':')[1];
+  helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
+    console.log(`Helper server running on ${address}`);
+  });
 }
 
-/**
- * Watch the pending queue for a department (server-streaming).
- * @param {string} agentId
- * @param {string} department
- * @returns {grpc.ClientReadableStream}
- */
-function watchQueue(agentId, department) {
-  return stub.WatchQueue({ agent_id: agentId, department });
+export function login(id,pass,callback){
+  const request={
+    agent_id: id,
+    password: pass,
+  };
+  
+  centralStub.Login(request, (err,response)=>{
+    if (typeof callback === 'function') {
+      callback(err, response);
+    }
+  });
 }
 
-/**
- * Self-assign a pending session.
- * @param {string} agentId
- * @param {string} sessionId
- * @returns {Promise<AssignResponse>}
- */
-function assignClient(agentId, sessionId) {
-  return new Promise((resolve, reject) =>
-    stub.AssignClient({ agent_id: agentId, session_id: sessionId },
-      (err, res) => err ? reject(err) : resolve(res))
-  );
+export function logout(agentId, callback) {
+  const request = {
+    agent_id: agentId
+  };
+
+  // Memanggil RPC Logout yang sudah dibuat di .proto
+  centralStub.Logout(request, (err, response) => {
+    if (typeof callback === 'function') {
+      callback(err, response);
+    }
+  });
 }
 
-/**
- * Open a bidirectional chat stream.
- * @returns {grpc.ClientDuplexStream}
- */
-function chatStream() {
-  return stub.ChatStream();
+export function watchQueue(agentId,dept,onUpdate){
+  const request={
+    agent_id: agentId,
+    department: dept
+  };
+
+  const stream = centralStub.WatchQueue(request);
+
+  stream.on('data', (response) => {
+    if(onUpdate) onUpdate(response);
+  });
+
+  stream.on('error', (err) => {
+    console.error("Stream error:", err);
+  });
 }
 
-/**
- * End (close or ban) a session.
- * @param {string} agentId
- * @param {string} sessionId
- * @param {'DONE'|'BANNED'} reason
- * @param {string} [note]
- * @returns {Promise<EndSessionResponse>}
- */
-function endSession(agentId, sessionId, reason, note = '') {
-  return new Promise((resolve, reject) =>
-    stub.EndSession({ agent_id: agentId, session_id: sessionId, reason, note },
-      (err, res) => err ? reject(err) : resolve(res))
-  );
-}
+export function updateStatus(sessionId, status, agentId, callback) {
+  const request = {
+    session_id: sessionId,
+    status: status,
+    agent_id: agentId
+  };
 
-module.exports = { login, watchQueue, assignClient, chatStream, endSession };
+  centralStub.UpdateSessionStatus(request, (err, response) => {
+    callback(err, response);
+  });
+}

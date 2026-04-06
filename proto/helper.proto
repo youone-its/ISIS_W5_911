@@ -55,10 +55,32 @@ message EndSessionResponse {
   string message=3;
 }
 
+message UpdateStatusRequest {
+  string session_id = 1;
+  int32 status = 2; // 1: ONGOING, 2: DONE, 3: BANNED
+  string agent_id = 3;
+}
+
+message UpdateStatusResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message LogoutRequest {
+  string agent_id = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 service HelperService{
     rpc Login (HelperLoginRequest) returns (HelperLoginResponse);
     rpc WatchQueue (WatchQueueRequest) returns (stream QueueUpdate);
     rpc AssignClient (AssignRequest) returns (AssignResponse);
     rpc ChatStream (stream ChatMessage) returns (stream ChatMessage);
     rpc EndSession (EndSessionRequest) returns (EndSessionResponse);
+    rpc UpdateSessionStatus (UpdateStatusRequest) returns (UpdateStatusResponse);
+    rpc Logout (LogoutRequest) returns (LogoutResponse);
 }

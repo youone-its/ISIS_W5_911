@@ -35,9 +35,20 @@ message SessionUpdate{
   string notification=2;
 }
 
+message CancelEmergencyRequest {
+  string session_id = 1;
+  string client_id = 2;
+}
+
+message CancelEmergencyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 service ClientService{
   rpc Register (RegisterRequest) returns (RegisterResponse);
   rpc RequestEmergency (EmergencyRequest) returns (EmergencyResponse);
   rpc WatchSessionStatus (WatchSessionRequest) returns (stream SessionUpdate);
   rpc ChatStream (stream ChatMessage) returns (stream ChatMessage);
+  rpc CancelEmergency (CancelEmergencyRequest) returns (CancelEmergencyResponse);
 }
