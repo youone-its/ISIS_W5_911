@@ -35,10 +35,21 @@ const activeClients = new Map();
 const loggedInHelpers = new Map();
 const activeSessionsByClient = new Map();
 const clientStatusStreams = new Map();
+const bannedClients = new Set();
+const bannedPhones = new Set();
+const clientToPhone = new Map(); // Untuk melacak phone_num dari client_id saat banning
 
 server.addService(proto.ClientService.service, {
   Register: (call, callback) => {
     const {phone_num} = call.request;
+    
+    if (bannedPhones.has(phone_num)) {
+      return callback(null, {
+        success: false,
+        message: "Gagal: Nomor telepon Anda telah diblokir dari sistem ini."
+      });
+    }
+
     if (activeClients.has(phone_num)) {
       return callback(null, {
         success: false,
@@ -47,6 +58,7 @@ server.addService(proto.ClientService.service, {
     }
     const clientId=`C-${Date.now()}`;
     activeClients.set(phone_num, clientId);
+    clientToPhone.set(clientId, phone_num);
 
     console.log(`Registered client: ${phone_num} (ID: ${clientId})`);
     callback(null, {
@@ -58,9 +70,17 @@ server.addService(proto.ClientService.service, {
 
   RequestEmergency: (call, callback) => {
     const {client_id, initial_message} = call.request;
+
+    if (bannedClients.has(client_id)) {
+      return callback(null, {
+        status: 3, // BANNED
+        info: "Gagal: Akun Anda telah diblokir oleh petugas. Anda tidak dapat melakukan permintaan bantuan lagi."
+      });
+    }
+
     if (activeSessionsByClient.has(client_id)) {
       return callback(null, {
-        status: 3, // BANNED atau REJECTED dalam konteks ini
+        status: 3, // Busy/Already has session
         info: "Gagal: Anda masih memiliki sesi darurat yang belum selesai!"
       });
     }
@@ -282,6 +302,15 @@ server.addService(proto.HelperService.service, {
 
     // 4. Jika status DONE atau BANNED, baru hapus
     if (status === 2 || status === 3) {
+      if (status === 3) {
+        console.log(`[BAN] Menambahkan Client ${targetClientId} ke daftar blokir.`);
+        bannedClients.add(targetClientId);
+        const phone = clientToPhone.get(targetClientId);
+        if (phone) {
+          bannedPhones.add(phone);
+          console.log(`[BAN] Nomor ${phone} juga telah diblokir.`);
+        }
+      }
       activeSessionsByClient.delete(targetClientId);
       for (let dept in queues) {
         queues[dept] = queues[dept].filter(s => s.session_id !== session_id);
@@ -295,8 +324,12 @@ server.addService(proto.HelperService.service, {
   }
 });
 
-server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), () => {
+server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), (err, port) => {
+  if (err) {
+    console.error(`Gagal bind server: ${err.message}`);
+    return;
+  }
   console.clear();
-  console.log('Server berjalan di port 50051');
+  console.log(`Server berjalan di port ${port}`);
   server.start();
 });

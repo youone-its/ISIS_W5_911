@@ -8,7 +8,8 @@ let clientState = {
   activeSession: null,
   currentStatus: "N/A",
   lastInfo: "-",
-  initialMessage: "-"
+  initialMessage: "-",
+  isBanned: false
 };
 
 async function showMainMenu() {
@@ -32,6 +33,10 @@ async function showMainMenu() {
   rl.question("\nPilih Menu: ", (choice) => {
     switch (choice) {
       case '1':
+        if (clientState.isBanned) {
+          console.log("\n[!] Gagal: Anda telah diblokir. Tidak dapat meminta bantuan lagi.");
+          return setTimeout(2000).then(showMainMenu);
+        }
         if (clientState.activeSession) {
           console.log("\n[!] Gagal: Selesaikan atau batalkan sesi aktif terlebih dahulu.");
           return setTimeout(1500).then(showMainMenu);
@@ -120,6 +125,10 @@ function startStatusWatcher() {
       clientState.currentStatus = statusNames[statusIndex] !== undefined ? statusNames[statusIndex] : "UNKNOWN";
       
       clientState.lastInfo = update.notification || "-";
+
+      if (statusIndex === 3) {
+        clientState.isBanned = true;
+      }
 
       showMainMenu();
 
