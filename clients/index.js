@@ -1,19 +1,20 @@
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
-const packageDefinition=protoLoader.loadSync([
+const packageDefinition = protoLoader.loadSync([
   './proto/helper.proto',
   './proto/clients.proto',
-], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+], { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
 const centralStub = new proto.ClientService('localhost:50051', grpc.credentials.createInsecure());
-export let mylocalprofile={
+export const getStub = () => centralStub;
+export let mylocalprofile = {
   client_id: null,
   phone_num: "089xxxxxxxx"
 };
 export let currentSessionId = null;
 
-export function register(phone,callback){
-  const request={
+export function register(phone, callback) {
+  const request = {
     phone_num: phone
   };
   centralStub.Register(request, (err, response) => {
@@ -26,8 +27,8 @@ export function register(phone,callback){
   });
 }
 
-export function requestEmergency(message,type,callback){
-  const request={
+export function requestEmergency(message, type, callback) {
+  const request = {
     client_id: mylocalprofile.client_id,
     initial_message: message,
   };
@@ -74,6 +75,6 @@ export function watchMyStatus(onUpdate) {
   stream.on('error', (err) => {
     // Diamkan jika error karena cancel
   });
-  
+
   return stream;
 }

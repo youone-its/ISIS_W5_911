@@ -12,6 +12,15 @@
   "license": "ISC",
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
-    "@grpc/proto-loader": "^0.8.0"
-  }
+    "@grpc/proto-loader": "^0.8.0",
+    "readline-sync": "^1.4.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/youone-its/ISIS_W5_911.git"
+  },
+  "bugs": {
+    "url": "https://github.com/youone-its/ISIS_W5_911/issues"
+  },
+  "homepage": "https://github.com/youone-its/ISIS_W5_911#readme"
 }

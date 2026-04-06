@@ -1,14 +1,14 @@
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 
-const packageDefinition=protoLoader.loadSync([
+const packageDefinition = protoLoader.loadSync([
   './proto/clients.proto',
   './proto/helper.proto',
-], {keepCase:true});
+], { keepCase: true });
 
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
 
-const registry={
+const registry = {
   helpers: new Map([
     ["H001", { password: "123", name: "Budi Damkar", department: "FIRE", address: "localhost:50052" }],
     ["H002", { password: "456", name: "Siti Medis", department: "MEDICAL", address: "localhost:50053" }],
@@ -24,13 +24,13 @@ const EmergencyType = {
 };
 
 const queues = {
-    FIRE: [],
-    MEDICAL: [],
-    POLICE: []
+  FIRE: [],
+  MEDICAL: [],
+  POLICE: []
 };
 
 const helperStreams = new Map();
-const server=new grpc.Server();
+const server = new grpc.Server();
 const activeClients = new Map();
 const loggedInHelpers = new Map();
 const activeSessionsByClient = new Map();
@@ -39,10 +39,42 @@ const bannedClients = new Set();
 const bannedPhones = new Set();
 const clientToPhone = new Map(); // Untuk melacak phone_num dari client_id saat banning
 
+const chatSessions = new Map();
+
+const chatStreamHandler = (call) => {
+  let currentSessionId = null;
+  call.on('data', (msg) => {
+    currentSessionId = msg.session_id;
+    if (!chatSessions.has(currentSessionId)) {
+      chatSessions.set(currentSessionId, new Set());
+    }
+    chatSessions.get(currentSessionId).add(call);
+
+    // Broadcast
+    chatSessions.get(currentSessionId).forEach(c => {
+      c.write(msg);
+    });
+  });
+
+  call.on('end', () => {
+    if (currentSessionId && chatSessions.has(currentSessionId)) {
+      chatSessions.get(currentSessionId).delete(call);
+    }
+    call.end();
+  });
+
+  call.on('error', () => {
+    if (currentSessionId && chatSessions.has(currentSessionId)) {
+      chatSessions.get(currentSessionId).delete(call);
+    }
+  });
+};
+
 server.addService(proto.ClientService.service, {
+  ChatStream: chatStreamHandler,
   Register: (call, callback) => {
-    const {phone_num} = call.request;
-    
+    const { phone_num } = call.request;
+
     if (bannedPhones.has(phone_num)) {
       return callback(null, {
         success: false,
@@ -56,20 +88,20 @@ server.addService(proto.ClientService.service, {
         message: "Nomor telepon sudah terdaftar dan aktif!"
       });
     }
-    const clientId=`C-${Date.now()}`;
+    const clientId = `C-${Date.now()}`;
     activeClients.set(phone_num, clientId);
     clientToPhone.set(clientId, phone_num);
 
     console.log(`Registered client: ${phone_num} (ID: ${clientId})`);
     callback(null, {
-      success:true, 
-      client:{client_id:clientId, phone_num:phone_num}, 
-      message:"Berhasil REgistrasi"
+      success: true,
+      client: { client_id: clientId, phone_num: phone_num },
+      message: "Berhasil REgistrasi"
     });
   },
 
   RequestEmergency: (call, callback) => {
-    const {client_id, initial_message} = call.request;
+    const { client_id, initial_message } = call.request;
 
     if (bannedClients.has(client_id)) {
       return callback(null, {
@@ -84,7 +116,7 @@ server.addService(proto.ClientService.service, {
         info: "Gagal: Anda masih memiliki sesi darurat yang belum selesai!"
       });
     }
-  
+
     const input = initial_message.toLowerCase();
     let type = "POLICE"; // Default
 
@@ -96,18 +128,18 @@ server.addService(proto.ClientService.service, {
 
     const session_id = `S-${Date.now()}`;
     activeSessionsByClient.set(client_id, session_id);
-    const newSession = { 
-      session_id: session_id, 
-      client_id: client_id, 
-      initial_message: initial_message, 
-      status: 0 
+    const newSession = {
+      session_id: session_id,
+      client_id: client_id,
+      initial_message: initial_message,
+      status: 0
     };
     queues[type].push(newSession);
     console.log(`New emergency request from Client ${client_id} categorized as ${type}. Session ID: ${session_id}`);
 
-    helperStreams.forEach((helper,id) => {
+    helperStreams.forEach((helper, id) => {
       const targetDept = (type === "FIRE") ? 1 : (type === "MEDICAL") ? 2 : 3;
-      if(helper.department === targetDept){
+      if (helper.department === targetDept) {
         console.log(`[Stream] Mengirim update ke Helper ID: ${id}`);
         helper.stream.write({
           new_session: newSession,
@@ -115,7 +147,7 @@ server.addService(proto.ClientService.service, {
         });
       }
     });
-    
+
     callback(null, {
       session_id: session_id,
       routed_to: EmergencyType[type],
@@ -126,7 +158,7 @@ server.addService(proto.ClientService.service, {
 
   WatchSessionStatus: (call) => {
     const { client_id } = call.request;
-    
+
     // Daftarkan stream agar bisa di-push nanti
     clientStatusStreams.set(client_id, call);
 
@@ -150,7 +182,7 @@ server.addService(proto.ClientService.service, {
   // [cite: 17-23] Perbaikan CancelEmergency
   CancelEmergency: (call, callback) => {
     const { session_id, client_id } = call.request;
-    let targetDept = null;    
+    let targetDept = null;
     let foundInQueue = false;
 
     // Cari dan hapus dari antrean
@@ -187,9 +219,10 @@ server.addService(proto.ClientService.service, {
 });
 
 server.addService(proto.HelperService.service, {
+  ChatStream: chatStreamHandler,
   Login: (call, callback) => {
-    const {agent_id, password, department} = call.request;
-    const helperData=registry.helpers.get(agent_id);
+    const { agent_id, password, department } = call.request;
+    const helperData = registry.helpers.get(agent_id);
     if (!helperData || helperData.password !== password) {
       return callback(null, { success: false, message: "Auth Gagal" });
     }
@@ -198,8 +231,8 @@ server.addService(proto.HelperService.service, {
     }
     loggedInHelpers.set(agent_id, true);
     callback(null, {
-      success:true,
-      agent:{
+      success: true,
+      agent: {
         agent_id: agent_id,
         name: helperData.name,
         department: helperData.department,
@@ -211,30 +244,30 @@ server.addService(proto.HelperService.service, {
 
   Logout: (call, callback) => {
     const { agent_id } = call.request;
-    
+
     if (loggedInHelpers.has(agent_id)) {
       loggedInHelpers.delete(agent_id); // Menghapus status login dari Map [cite: 5]
       console.log(`[Auth] Helper ${agent_id} berhasil logout.`);
-      
-      callback(null, { 
-        success: true, 
-        message: "Logout berhasil, Anda sekarang bisa login kembali." 
+
+      callback(null, {
+        success: true,
+        message: "Logout berhasil, Anda sekarang bisa login kembali."
       });
     } else {
-      callback(null, { 
-        success: false, 
-        message: "Agent ID tidak ditemukan dalam daftar login." 
+      callback(null, {
+        success: false,
+        message: "Agent ID tidak ditemukan dalam daftar login."
       });
     }
   },
 
   WatchQueue: (call) => {
-    const {agent_id, department} = call.request;
+    const { agent_id, department } = call.request;
     const deptKey = (department == 1) ? "FIRE" : (department == 2) ? "MEDICAL" : "POLICE";
     console.log(`[Stream] Helper ${agent_id} watching queue for ${department}`);
-    helperStreams.set(agent_id, { 
-      stream: call, 
-      department: department 
+    helperStreams.set(agent_id, {
+      stream: call,
+      department: department
     });
 
     const existingSessions = queues[deptKey] || [];
@@ -242,7 +275,7 @@ server.addService(proto.HelperService.service, {
       call.write({
         event: `Koneksi berhasil. Ada ${existingSessions.length} antrean menunggu.`,
         // Pastikan field PENDING di proto kamu adalah 'repeated'
-        PENDING: existingSessions 
+        PENDING: existingSessions
       });
     } else {
       call.write({ event: "Koneksi berhasil. Antrean kosong." });
@@ -257,7 +290,7 @@ server.addService(proto.HelperService.service, {
 
   UpdateSessionStatus: (call, callback) => {
     const { session_id, status, agent_id } = call.request;
-    
+
     // 1. Cari client_id berdasarkan session_id
     let targetClientId = null;
     activeSessionsByClient.forEach((sId, cId) => {
@@ -317,9 +350,9 @@ server.addService(proto.HelperService.service, {
       }
     }
 
-    callback(null, { 
-      success: true, 
-      message: `Berhasil mengubah status menjadi ${status}` 
+    callback(null, {
+      success: true,
+      message: `Berhasil mengubah status menjadi ${status}`
     });
   }
 });

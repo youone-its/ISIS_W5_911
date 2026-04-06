@@ -1,44 +1,45 @@
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
-const packageDefinition=protoLoader.loadSync([
+const packageDefinition = protoLoader.loadSync([
   './proto/helper.proto',
-], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+], { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
 const centralStub = new proto.HelperService('localhost:50051', grpc.credentials.createInsecure());
+export const getStub = () => centralStub;
 const activeSessions = new Map();
 let helperNode = null;
 
-export function startHelper(address,onClientAssigned){
-  const helperNode=new grpc.Server();
+export function startHelper(address, onClientAssigned) {
+  const helperNode = new grpc.Server();
   helperNode.addService(proto.HelperService.service, {
-    AssignClient:(call, callback)=>{
-      const {session_id, agent_id}=call.request;
+    AssignClient: (call, callback) => {
+      const { session_id, agent_id } = call.request;
 
       activeSessions.set(session_id, agent_id);
 
       if (onClientAssigned) onClientAssigned(session_id);
 
       callback(null, {
-        success:true,
+        success: true,
         message: "Client assigned to local node",
         session: { session_id: session_id, status: "ONGOING" }
       });
     }
   });
-  
+
   const port = address.split(':')[1];
   helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
     console.log(`Helper server running on ${address}`);
   });
 }
 
-export function login(id,pass,callback){
-  const request={
+export function login(id, pass, callback) {
+  const request = {
     agent_id: id,
     password: pass,
   };
-  
-  centralStub.Login(request, (err,response)=>{
+
+  centralStub.Login(request, (err, response) => {
     if (typeof callback === 'function') {
       callback(err, response);
     }
@@ -58,8 +59,8 @@ export function logout(agentId, callback) {
   });
 }
 
-export function watchQueue(agentId,dept,onUpdate){
-  const request={
+export function watchQueue(agentId, dept, onUpdate) {
+  const request = {
     agent_id: agentId,
     department: dept
   };
@@ -67,7 +68,7 @@ export function watchQueue(agentId,dept,onUpdate){
   const stream = centralStub.WatchQueue(request);
 
   stream.on('data', (response) => {
-    if(onUpdate) onUpdate(response);
+    if (onUpdate) onUpdate(response);
   });
 
   stream.on('error', (err) => {
