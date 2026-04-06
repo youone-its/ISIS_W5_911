@@ -30,7 +30,7 @@ message UpdateSessionRequest{
     string agent_id=3;
 }
 
-message UpdateSessioResponse{
+message UpdateSessionResponse{
     Session updated_session=1;
     bool success=2;
 }

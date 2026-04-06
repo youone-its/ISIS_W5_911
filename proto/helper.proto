@@ -31,8 +31,8 @@ message AssignResponse{
 }
 
 enum EndReason{
-    DONE=0;
-    BANNED=1;
+    REASON_DONE=0;
+    REASON_BANNED=1;
 }
 
 message EndSessionRequest{
