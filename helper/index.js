@@ -29,7 +29,7 @@ export function startHelper(address, onClientAssigned) {
 
   const port = address.split(':')[1];
   helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
-    console.log(`Helper server running on ${address}`);
+    // Silently start the local helper node to prevent UI clutter
   });
 }
 

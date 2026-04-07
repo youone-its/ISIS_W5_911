@@ -51,9 +51,11 @@ const chatStreamHandler = (call) => {
     chatSessions.get(currentSessionId).add(call);
 
     // Broadcast
-    chatSessions.get(currentSessionId).forEach(c => {
-      c.write(msg);
-    });
+    if (msg.content || msg.status) {
+      chatSessions.get(currentSessionId).forEach(c => {
+        c.write(msg);
+      });
+    }
   });
 
   call.on('end', () => {
@@ -230,6 +232,8 @@ server.addService(proto.HelperService.service, {
       return callback(null, { success: false, message: "Agent sudah login di perangkat lain!" });
     }
     loggedInHelpers.set(agent_id, true);
+    console.log(`Helper server running on ${helperData.address}`);
+    
     callback(null, {
       success: true,
       agent: {
@@ -335,6 +339,17 @@ server.addService(proto.HelperService.service, {
 
     // 4. Jika status DONE atau BANNED, baru hapus
     if (status === 2 || status === 3) {
+      if (chatSessions.has(session_id)) {
+        chatSessions.get(session_id).forEach(c => {
+          c.write({
+            sender_id: "SYSTEM",
+            content: status === 3 ? "Laporan telah diblokir." : "Sesi telah ditutup oleh agen.",
+            status: status === 2 ? "done" : "banned"
+          });
+        });
+        chatSessions.delete(session_id);
+      }
+
       if (status === 3) {
         console.log(`[BAN] Menambahkan Client ${targetClientId} ke daftar blokir.`);
         bannedClients.add(targetClientId);
