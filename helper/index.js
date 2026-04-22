@@ -8,17 +8,23 @@ const centralStub = new proto.HelperService('localhost:50051', grpc.credentials.
 export const getStub = () => centralStub;
 const activeSessions = new Map();
 let helperNode = null;
-
+ 
 export function startHelper(address, onClientAssigned) {
   const helperNode = new grpc.Server();
   helperNode.addService(proto.HelperService.service, {
     AssignClient: (call, callback) => {
       const { session_id, agent_id } = call.request;
-
+ 
       activeSessions.set(session_id, agent_id);
+      centralStub.UpdateSessionStatus(
+        { session_id, status: 1, agent_id },
+        (err, res) => {
+          if (err) console.error('[AssignClient] UpdateSessionStatus error:', err);
+        }
+      );
 
       if (onClientAssigned) onClientAssigned(session_id);
-
+ 
       callback(null, {
         success: true,
         message: "Client assigned to local node",
@@ -26,31 +32,31 @@ export function startHelper(address, onClientAssigned) {
       });
     }
   });
-
+ 
   const port = address.split(':')[1];
   helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
     // Silently start the local helper node to prevent UI clutter
   });
 }
-
+ 
 export function login(id, pass, callback) {
   const request = {
     agent_id: id,
     password: pass,
   };
-
+ 
   centralStub.Login(request, (err, response) => {
     if (typeof callback === 'function') {
       callback(err, response);
     }
   });
 }
-
+ 
 export function logout(agentId, callback) {
   const request = {
     agent_id: agentId
   };
-
+ 
   // Memanggil RPC Logout yang sudah dibuat di .proto
   centralStub.Logout(request, (err, response) => {
     if (typeof callback === 'function') {
@@ -58,31 +64,31 @@ export function logout(agentId, callback) {
     }
   });
 }
-
+ 
 export function watchQueue(agentId, dept, onUpdate) {
   const request = {
     agent_id: agentId,
     department: dept
   };
-
+ 
   const stream = centralStub.WatchQueue(request);
-
+ 
   stream.on('data', (response) => {
     if (onUpdate) onUpdate(response);
   });
-
+ 
   stream.on('error', (err) => {
     console.error("Stream error:", err);
   });
 }
-
+ 
 export function updateStatus(sessionId, status, agentId, callback) {
   const request = {
     session_id: sessionId,
     status: status,
     agent_id: agentId
   };
-
+ 
   centralStub.UpdateSessionStatus(request, (err, response) => {
     callback(err, response);
   });

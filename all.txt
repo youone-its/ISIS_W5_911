@@ -1,15 +1,40 @@
-server/index.js
-const grpc=require('@grpc/grpc-js');
-const protoLoader=require('@grpc/proto-loader');
+~/Documents/KULIAH/ISIS/ISIS_W5_911 akbar                                           Py base 09:09:10 AM
+❯ tree -I node_modules 
+.
+├── all.txt
+├── clients
+│   ├── client_chat.js
+│   ├── index.js
+│   └── terminal.js
+├── helper
+│   ├── helper_chat.js
+│   ├── index.js
+│   └── terminal.js
+├── package.json
+├── package-lock.json
+├── proto
+│   ├── clients.proto
+│   ├── common.proto
+│   ├── dispatcher.proto
+│   └── helper.proto
+└── server
+    └── index.js
 
-const packageDefinition=protoLoader.loadSync([
+4 directories, 14 files
+
+==============================================================================================
+server/index.js
+import grpc from '@grpc/grpc-js';
+import protoLoader from '@grpc/proto-loader';
+
+const packageDefinition = protoLoader.loadSync([
   './proto/clients.proto',
   './proto/helper.proto',
-], {keepCase:true});
+], { keepCase: true });
 
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
 
-const registry={
+const registry = {
   helpers: new Map([
     ["H001", { password: "123", name: "Budi Damkar", department: "FIRE", address: "localhost:50052" }],
     ["H002", { password: "456", name: "Siti Medis", department: "MEDICAL", address: "localhost:50053" }],
@@ -25,47 +50,101 @@ const EmergencyType = {
 };
 
 const queues = {
-    FIRE: [],
-    MEDICAL: [],
-    POLICE: []
+  FIRE: [],
+  MEDICAL: [],
+  POLICE: []
 };
 
 const helperStreams = new Map();
-const server=new grpc.Server();
+const server = new grpc.Server();
 const activeClients = new Map();
 const loggedInHelpers = new Map();
 const activeSessionsByClient = new Map();
 const clientStatusStreams = new Map();
+const bannedClients = new Set();
+const bannedPhones = new Set();
+const clientToPhone = new Map(); // Untuk melacak phone_num dari client_id saat banning
+
+const chatSessions = new Map();
+
+const chatStreamHandler = (call) => {
+  let currentSessionId = null;
+  call.on('data', (msg) => {
+    currentSessionId = msg.session_id;
+    if (!chatSessions.has(currentSessionId)) {
+      chatSessions.set(currentSessionId, new Set());
+    }
+    chatSessions.get(currentSessionId).add(call);
+
+    // Broadcast
+    if (msg.content || msg.status) {
+      chatSessions.get(currentSessionId).forEach(c => {
+        c.write(msg);
+      });
+    }
+  });
+
+  call.on('end', () => {
+    if (currentSessionId && chatSessions.has(currentSessionId)) {
+      chatSessions.get(currentSessionId).delete(call);
+    }
+    call.end();
+  });
+
+  call.on('error', () => {
+    if (currentSessionId && chatSessions.has(currentSessionId)) {
+      chatSessions.get(currentSessionId).delete(call);
+    }
+  });
+};
 
 server.addService(proto.ClientService.service, {
+  ChatStream: chatStreamHandler,
   Register: (call, callback) => {
-    const {phone_num} = call.request;
+    const { phone_num } = call.request;
+
+    if (bannedPhones.has(phone_num)) {
+      return callback(null, {
+        success: false,
+        message: "Gagal: Nomor telepon Anda telah diblokir dari sistem ini."
+      });
+    }
+
     if (activeClients.has(phone_num)) {
       return callback(null, {
         success: false,
         message: "Nomor telepon sudah terdaftar dan aktif!"
       });
     }
-    const clientId=`C-${Date.now()}`;
+    const clientId = `C-${Date.now()}`;
     activeClients.set(phone_num, clientId);
+    clientToPhone.set(clientId, phone_num);
 
     console.log(`Registered client: ${phone_num} (ID: ${clientId})`);
     callback(null, {
-      success:true, 
-      client:{client_id:clientId, phone_num:phone_num}, 
-      message:"Berhasil REgistrasi"
+      success: true,
+      client: { client_id: clientId, phone_num: phone_num },
+      message: "Berhasil REgistrasi"
     });
   },
 
   RequestEmergency: (call, callback) => {
-    const {client_id, initial_message} = call.request;
+    const { client_id, initial_message } = call.request;
+
+    if (bannedClients.has(client_id)) {
+      return callback(null, {
+        status: 3, // BANNED
+        info: "Gagal: Akun Anda telah diblokir oleh petugas. Anda tidak dapat melakukan permintaan bantuan lagi."
+      });
+    }
+
     if (activeSessionsByClient.has(client_id)) {
       return callback(null, {
-        status: 3, // BANNED atau REJECTED dalam konteks ini
+        status: 3, // Busy/Already has session
         info: "Gagal: Anda masih memiliki sesi darurat yang belum selesai!"
       });
     }
-  
+
     const input = initial_message.toLowerCase();
     let type = "POLICE"; // Default
 
@@ -77,18 +156,18 @@ server.addService(proto.ClientService.service, {
 
     const session_id = `S-${Date.now()}`;
     activeSessionsByClient.set(client_id, session_id);
-    const newSession = { 
-      session_id: session_id, 
-      client_id: client_id, 
-      initial_message: initial_message, 
-      status: 0 
+    const newSession = {
+      session_id: session_id,
+      client_id: client_id,
+      initial_message: initial_message,
+      status: 0
     };
     queues[type].push(newSession);
     console.log(`New emergency request from Client ${client_id} categorized as ${type}. Session ID: ${session_id}`);
 
-    helperStreams.forEach((helper,id) => {
+    helperStreams.forEach((helper, id) => {
       const targetDept = (type === "FIRE") ? 1 : (type === "MEDICAL") ? 2 : 3;
-      if(helper.department === targetDept){
+      if (helper.department === targetDept) {
         console.log(`[Stream] Mengirim update ke Helper ID: ${id}`);
         helper.stream.write({
           new_session: newSession,
@@ -96,7 +175,7 @@ server.addService(proto.ClientService.service, {
         });
       }
     });
-    
+
     callback(null, {
       session_id: session_id,
       routed_to: EmergencyType[type],
@@ -105,10 +184,36 @@ server.addService(proto.ClientService.service, {
     });
   },
 
+  WatchSessionStatus: (call) => {
+    const { client_id } = call.request;
+
+    // Daftarkan stream agar bisa di-push nanti
+    clientStatusStreams.set(client_id, call);
+
+    // KIRIM STATUS AWAL JIKA ADA SESI AKTIF
+    const session_id = activeSessionsByClient.get(client_id);
+    if (session_id) {
+      // Pastikan mengirim objek yang lengkap agar terminal client tidak undefined
+      call.write({
+        session: {
+          session_id: session_id,
+          status: 0 // PENDING
+        },
+        notification: "Menunggu respons petugas..."
+      });
+    }
+
+    call.on('cancelled', () => {
+      clientStatusStreams.delete(client_id);
+    });
+  },
+  // [cite: 17-23] Perbaikan CancelEmergency
   CancelEmergency: (call, callback) => {
     const { session_id, client_id } = call.request;
-    let targetDept = null;    
+    let targetDept = null;
     let foundInQueue = false;
+
+    // Cari dan hapus dari antrean
     for (let dept in queues) {
       const index = queues[dept].findIndex(s => s.session_id === session_id);
       if (index !== -1) {
@@ -120,59 +225,32 @@ server.addService(proto.ClientService.service, {
     }
 
     if (foundInQueue) {
-      activeSessionsByClient.delete(client_id); // Bebaskan client
+      activeSessionsByClient.delete(client_id);
+
+      // BERITAHU HELPER: Kirim event pembatalan dan antrean terbaru
       const deptNum = (targetDept === "FIRE") ? 1 : (targetDept === "MEDICAL") ? 2 : 3;
-    
       helperStreams.forEach((helper, agent_id) => {
         if (helper.department == deptNum) {
           helper.stream.write({
-            event: `CANCEL_EVENT:${session_id}`, // Gunakan prefix khusus
-            PENDING: queues[targetDept] // Kirim antrean terbaru yang sudah dikurangi
+            event: `CANCEL_EVENT:${session_id}`, // Identifikasi sesi yang dibatalkan
+            PENDING: queues[targetDept] // Kirim ulang daftar antrean yang sudah bersih [cite: 22]
           });
         }
       });
 
       callback(null, { success: true, message: "Sesi berhasil dibatalkan." });
     } else {
-      callback(null, { success: false, message: "Gagal: Sesi sudah ditangani petugas atau tidak ditemukan." });
+      callback(null, { success: false, message: "Gagal: Sesi tidak ditemukan atau sudah ditangani." });
     }
-  },
-
-  WatchSessionStatus: (call) => {
-    const { client_id } = call.request;
-    const session_id = activeSessionsByClient.get(client_id);
-    if (session_id) {
-      let initial_info = "Menunggu respons petugas...";      
-      call.write({
-        session_id: session_id,
-        status: 0, // PENDING (Sesuai Enum di proto)
-        info: initial_info
-      });
-    }
-  
-    console.log(`[Stream] Client ${client_id} is watching their session status.`);
-
-    clientStatusStreams.set(client_id, call);
-
-    const activeSessionId = activeSessionsByClient.get(client_id);
-    if (activeSessionId) {
-      call.write({
-        session_id: activeSessionId,
-        status: 0, // PENDING
-        info: "Menunggu petugas merespons..."
-      });
-    }
-
-    call.on('cancelled', () => {
-      clientStatusStreams.delete(client_id);
-    });
   }
+
 });
 
 server.addService(proto.HelperService.service, {
+  ChatStream: chatStreamHandler,
   Login: (call, callback) => {
-    const {agent_id, password, department} = call.request;
-    const helperData=registry.helpers.get(agent_id);
+    const { agent_id, password, department } = call.request;
+    const helperData = registry.helpers.get(agent_id);
     if (!helperData || helperData.password !== password) {
       return callback(null, { success: false, message: "Auth Gagal" });
     }
@@ -180,9 +258,11 @@ server.addService(proto.HelperService.service, {
       return callback(null, { success: false, message: "Agent sudah login di perangkat lain!" });
     }
     loggedInHelpers.set(agent_id, true);
+    console.log(`Helper server running on ${helperData.address}`);
+    
     callback(null, {
-      success:true,
-      agent:{
+      success: true,
+      agent: {
         agent_id: agent_id,
         name: helperData.name,
         department: helperData.department,
@@ -192,13 +272,32 @@ server.addService(proto.HelperService.service, {
     });
   },
 
+  Logout: (call, callback) => {
+    const { agent_id } = call.request;
+
+    if (loggedInHelpers.has(agent_id)) {
+      loggedInHelpers.delete(agent_id); // Menghapus status login dari Map [cite: 5]
+      console.log(`[Auth] Helper ${agent_id} berhasil logout.`);
+
+      callback(null, {
+        success: true,
+        message: "Logout berhasil, Anda sekarang bisa login kembali."
+      });
+    } else {
+      callback(null, {
+        success: false,
+        message: "Agent ID tidak ditemukan dalam daftar login."
+      });
+    }
+  },
+
   WatchQueue: (call) => {
-    const {agent_id, department} = call.request;
+    const { agent_id, department } = call.request;
     const deptKey = (department == 1) ? "FIRE" : (department == 2) ? "MEDICAL" : "POLICE";
     console.log(`[Stream] Helper ${agent_id} watching queue for ${department}`);
-    helperStreams.set(agent_id, { 
-      stream: call, 
-      department: department 
+    helperStreams.set(agent_id, {
+      stream: call,
+      department: department
     });
 
     const existingSessions = queues[deptKey] || [];
@@ -206,7 +305,7 @@ server.addService(proto.HelperService.service, {
       call.write({
         event: `Koneksi berhasil. Ada ${existingSessions.length} antrean menunggu.`,
         // Pastikan field PENDING di proto kamu adalah 'repeated'
-        PENDING: existingSessions 
+        PENDING: existingSessions
       });
     } else {
       call.write({ event: "Koneksi berhasil. Antrean kosong." });
@@ -214,34 +313,529 @@ server.addService(proto.HelperService.service, {
 
     call.on('cancelled', () => {
       helperStreams.delete(agent_id);
+      loggedInHelpers.delete(agent_id);
       console.log(`[Stream] Helper ${agent_id} stopped watching.`);
+    });
+  },
+
+  UpdateSessionStatus: (call, callback) => {
+    const { session_id, status, agent_id } = call.request;
+
+    // 1. Cari client_id berdasarkan session_id
+    let targetClientId = null;
+    activeSessionsByClient.forEach((sId, cId) => {
+      if (sId === session_id) targetClientId = cId;
+    });
+
+    if (!targetClientId) {
+      return callback(null, { success: false, message: "Sesi tidak ditemukan." });
+    }
+
+    // --- PERBAIKAN DI SINI: Update status di memory server ---
+    // Cari di antrean dan update statusnya agar saat di-broadcast datanya benar
+    for (let dept in queues) {
+      const session = queues[dept].find(s => s.session_id === session_id);
+      if (session) {
+        session.status = parseInt(status); // Update status jadi 1 (ONGOING), dst.
+        break;
+      }
+    }
+    // -------------------------------------------------------
+
+    // 2. Tentukan pesan info
+    const infoMsgs = [
+      "Menunggu petugas...",
+      `Laporan sedang ditangani oleh petugas (${agent_id}).`,
+      "Laporan telah selesai ditangani. Terima kasih.",
+      "Laporan Anda ditolak/diblokir oleh sistem."
+    ];
+
+    // 3. Kirim UPDATE ke Client via Stream
+    const clientStream = clientStatusStreams.get(targetClientId);
+    if (clientStream) {
+      console.log(`[Stream] Mengirim update status ${status} ke Client ${targetClientId}`);
+      clientStream.write({
+        session: {
+          session_id: session_id,
+          status: parseInt(status), // Menggunakan enum RequestStatus
+        },
+        notification: infoMsgs[status]
+      });
+    }
+
+    // 4. Jika status DONE atau BANNED, baru hapus
+    if (status === 2 || status === 3) {
+      if (chatSessions.has(session_id)) {
+        chatSessions.get(session_id).forEach(c => {
+          c.write({
+            sender_id: "SYSTEM",
+            content: status === 3 ? "Laporan telah diblokir." : "Sesi telah ditutup oleh agen.",
+            status: status === 2 ? "done" : "banned"
+          });
+        });
+        chatSessions.delete(session_id);
+      }
+
+      if (status === 3) {
+        console.log(`[BAN] Menambahkan Client ${targetClientId} ke daftar blokir.`);
+        bannedClients.add(targetClientId);
+        const phone = clientToPhone.get(targetClientId);
+        if (phone) {
+          bannedPhones.add(phone);
+          console.log(`[BAN] Nomor ${phone} juga telah diblokir.`);
+        }
+      }
+      activeSessionsByClient.delete(targetClientId);
+      for (let dept in queues) {
+        queues[dept] = queues[dept].filter(s => s.session_id !== session_id);
+      }
+    }
+
+    callback(null, {
+      success: true,
+      message: `Berhasil mengubah status menjadi ${status}`
     });
   }
 });
 
-server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), () => {
-  console.log('Server berjalan di port 50051');
+server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), (err, port) => {
+  if (err) {
+    console.error(`Gagal bind server: ${err.message}`);
+    return;
+  }
+  console.clear();
+  console.log(`Server berjalan di port ${port}`);
   server.start();
 });
 
+==============================================================================================
+helper/helper_chat.js
+export default function startChat(helper, agentId, sessionId, rl, onExit) {
+    console.log("\x1b[35m=== CHAT HELPER (Ketik 'exit' untuk kembali) ===\x1b[0m");
+    const call = helper.ChatStream();
+    let isChatActive = true;
 
+    // Register stream logic
+    call.write({
+        sender_id: agentId,
+        session_id: sessionId,
+        content: ""
+    });
+
+    const loop = () => {
+        rl.question("\x1b[36mHelper:\x1b[0m ", (text) => {
+            if (!isChatActive) {
+                if(onExit) onExit();
+                return;
+            }
+
+            // Hapus baris input sebelumnya agar tidak double di terminal
+            process.stdout.moveCursor(0, -1);
+            process.stdout.clearLine(0);
+
+            if (text.toLowerCase() === "exit") {
+                console.log("\x1b[33mKeluar chat...\x1b[0m");
+                isChatActive = false;
+                call.end();
+                if(onExit) onExit();
+                return;
+            }
+            call.write({
+                sender_id: agentId,
+                session_id: sessionId,
+                content: text,
+            });
+            loop();
+        });
+    };
+
+    call.on("data", (msg) => {
+        if (!msg.content && !msg.status) return;
+
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        
+        let formattedMsg;
+        if (msg.sender_id === agentId) {
+            formattedMsg = `\x1b[36m[You]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        } else if (msg.sender_id.startsWith("H")) {
+            formattedMsg = `\x1b[36m[Helper]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        } else if (msg.sender_id === "SYSTEM") {
+            formattedMsg = `\x1b[33m[SYSTEM]\x1b[0m \x1b[93m${msg.content}\x1b[0m`;
+        } else {
+            formattedMsg = `\x1b[32m[Client]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        }
+        
+        if (msg.content) {
+            console.log(formattedMsg);
+        }
+
+        if (msg.status === "done" || msg.status === "banned") {
+            console.log("\x1b[33mSession selesai dari Server.\x1b[0m");
+            isChatActive = false;
+            call.end();
+            // Force exit the blocked prompt
+            rl.write(null, {ctrl: true, name: 'u'});
+            rl.write('\n');
+        } else {
+            // Tampilkan ulang prompt karena ditimpa log
+            if (isChatActive) {
+                process.stdout.write("\x1b[36mHelper:\x1b[0m ");
+            }
+        }
+    });
+
+    loop();
+};
+
+==============================================================================================
+helper/index.js
+import grpc from '@grpc/grpc-js';
+import protoLoader from '@grpc/proto-loader';
+const packageDefinition = protoLoader.loadSync([
+  './proto/helper.proto',
+], { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
+const centralStub = new proto.HelperService('localhost:50051', grpc.credentials.createInsecure());
+export const getStub = () => centralStub;
+const activeSessions = new Map();
+let helperNode = null;
+
+export function startHelper(address, onClientAssigned) {
+  const helperNode = new grpc.Server();
+  helperNode.addService(proto.HelperService.service, {
+    AssignClient: (call, callback) => {
+      const { session_id, agent_id } = call.request;
+
+      activeSessions.set(session_id, agent_id);
+
+      if (onClientAssigned) onClientAssigned(session_id);
+
+      callback(null, {
+        success: true,
+        message: "Client assigned to local node",
+        session: { session_id: session_id, status: "ONGOING" }
+      });
+    }
+  });
+
+  const port = address.split(':')[1];
+  helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
+    // Silently start the local helper node to prevent UI clutter
+  });
+}
+
+export function login(id, pass, callback) {
+  const request = {
+    agent_id: id,
+    password: pass,
+  };
+
+  centralStub.Login(request, (err, response) => {
+    if (typeof callback === 'function') {
+      callback(err, response);
+    }
+  });
+}
+
+export function logout(agentId, callback) {
+  const request = {
+    agent_id: agentId
+  };
+
+  // Memanggil RPC Logout yang sudah dibuat di .proto
+  centralStub.Logout(request, (err, response) => {
+    if (typeof callback === 'function') {
+      callback(err, response);
+    }
+  });
+}
+
+export function watchQueue(agentId, dept, onUpdate) {
+  const request = {
+    agent_id: agentId,
+    department: dept
+  };
+
+  const stream = centralStub.WatchQueue(request);
+
+  stream.on('data', (response) => {
+    if (onUpdate) onUpdate(response);
+  });
+
+  stream.on('error', (err) => {
+    console.error("Stream error:", err);
+  });
+}
+
+export function updateStatus(sessionId, status, agentId, callback) {
+  const request = {
+    session_id: sessionId,
+    status: status,
+    agent_id: agentId
+  };
+
+  centralStub.UpdateSessionStatus(request, (err, response) => {
+    callback(err, response);
+  });
+}
+
+==============================================================================================
+helper/terminal.js
+import * as startHelper from "./index.js";
+import startChat from "./helper_chat.js";
+import { setTimeout } from 'node:timers/promises';
+import readline from "readline";
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+const state = {
+  profile: null,
+  sessions: []
+};
+
+async function showDashboard() {
+  console.clear();
+  console.log(`\n=== DASHBOARD AGENT: ${state.profile.name} ===`);
+  console.log(`ID: ${state.profile.agent_id} | Dept: ${state.profile.department}`);
+  console.log(`-------------------------------------------`);
+
+  console.log("\n--- SESI DARURAT SAAT INI ---");
+  if (state.sessions.length === 0) {
+    console.log("Tidak ada panggilan aktif.");
+  } else {
+    state.sessions.forEach((s, i) => console.log(`${i + 1}. Session ID: ${s}`));
+  }
+  console.log(`-------------------------------------------`);
+
+  console.log("1. Assign Helper to CLient");
+  console.log("2. Chat");
+  console.log("3. Logout \u0026 Exit");
+
+  rl.question("\nPilih Menu: ", (choice) => {
+    if (choice === '1') {
+      console.log("\n--- DAFTAR ANTREAN ---");
+      if (state.sessions.length === 0) {
+        console.log("Tidak ada panggilan aktif.");
+        return showDashboard();
+      }
+
+      state.sessions.forEach((s, i) => console.log(`${i + 1}. ID: ${s}`));
+
+      rl.question("\nPilih nomor sesi untuk diproses (atau 'b' untuk kembali): ", (idx) => {
+        if (idx.toLowerCase() === 'b') return showDashboard();
+
+        const selectedSession = state.sessions[parseInt(idx) - 1];
+        if (!selectedSession) return showDashboard();
+
+        console.log(`\nProses Sesi: ${selectedSession}`);
+        console.log("1. Assign (On Going)");
+        console.log("2. Mark as Done");
+        console.log("3. Ban/Reject");
+
+        rl.question("Pilih aksi: ", (action) => {
+          let statusCode = (action === '1') ? 1 : (action === '2') ? 2 : (action === '3') ? 3 : null;
+
+          if (statusCode) {
+            startHelper.updateStatus(selectedSession, statusCode, state.profile.agent_id, (err, res) => {
+              if (!err && res.success) {
+                console.log(`\n  ${res.message}`);
+                if (statusCode > 1) {
+                  state.sessions = state.sessions.filter(id => id !== selectedSession);
+                }
+              } else {
+                console.log("\n  Gagal update status.");
+              }
+              showDashboard();
+            });
+          } else {
+            showDashboard();
+          }
+        });
+      });
+    } else if (choice === '2') {
+      if (state.sessions.length === 0) {
+        console.log("\n[!] Tidak ada panggilan aktif untuk di-chat.");
+        setTimeout(1500).then(showDashboard);
+      } else {
+        rl.question("\nPilih nomor sesi untuk di-chat: ", (idx) => {
+          const selectedSession = state.sessions[parseInt(idx) - 1];
+          if (!selectedSession) return showDashboard();
+          console.clear();
+          startChat(startHelper.getStub(), state.profile.agent_id, selectedSession, rl, showDashboard);
+        });
+      }
+    } else if (choice === '3') {
+      console.log("Logging out...");
+      startHelper.logout(state.profile.agent_id, () => {
+        process.exit();
+      });
+    } else {
+      showDashboard();
+    }
+  });
+}
+
+function startApp() {
+  console.clear();
+  console.log("=== EMERGENCY SYSTEM LOGIN ===");
+  rl.question("Agent ID   : ", (id) => {
+    rl.question("Password   : ", (pass) => {
+      startHelper.login(id, pass, (err, response) => {
+        if (err || !response.success) {
+          console.log(`\n  LOGIN GAGAL: ${response ? response.message : "Server Down"}`);
+          return startApp();
+        }
+
+        state.profile = response.agent;
+        const address = response.message.match(/localhost:\d+/)[0];
+
+        startHelper.startHelper(address, (newSessionId) => {
+          state.sessions.push(newSessionId);
+          console.log(`\n\n  PANGGILAN MASUK! ID Sesi: ${newSessionId}`);
+          process.stdout.write("Pilih Menu: "); // Kembalikan prompt menu
+        });
+
+        console.clear();
+        console.log(`  Login Berhasil sebagai ${state.profile.name}`);
+        console.clear();
+        startHelper.watchQueue(state.profile.agent_id, state.profile.department, async (update) => {
+          if (update.PENDING) {
+            state.sessions = update.PENDING.map(s => s.session_id); // Ganti list lama dengan yang baru [cite: 86]
+          }
+
+          if (update.new_session) {
+            if (!state.sessions.includes(update.new_session.session_id)) {
+              state.sessions.push(update.new_session.session_id);
+            }
+            console.log(`\n[QUEUE UPDATE] Ada permintaan baru: ${update.new_session.session_id}`);
+            await setTimeout(1000);
+            console.clear();
+            showDashboard();
+          }
+
+          if (update.event && update.event.startsWith("CANCEL_EVENT:")) {
+            const cancelledId = update.event.split(":")[1];
+            console.log(`\n[NOTIF] Sesi ${cancelledId} telah dibatalkan oleh Client.`);
+            state.sessions = state.sessions.filter(id => id !== cancelledId);
+            await setTimeout(1000);
+            console.clear();
+            showDashboard();
+          }
+
+          if (!update.new_session && !(update.event && update.event.startsWith("CANCEL_EVENT:"))) {
+            process.stdout.write("Pilih Menu: ");
+          }
+        });
+        console.clear();
+        showDashboard();
+      });
+    });
+  });
+}
+
+startApp();
+
+==============================================================================================
+clients/client_chat.js
+export default function startChat(client, clientId, sessionId, rl, onExit) {
+    console.log("\x1b[35m=== CHAT USER (Ketik 'exit' untuk kembali) ===\x1b[0m");
+    const call = client.ChatStream();
+    let isChatActive = true;
+
+    // Register stream logic
+    call.write({
+        sender_id: clientId,
+        session_id: sessionId,
+        content: ""
+    });
+
+    const loop = () => {
+        rl.question("\x1b[32mYou:\x1b[0m ", (text) => {
+            if (!isChatActive) {
+                if(onExit) onExit();
+                return;
+            }
+
+            // Hapus baris input sebelumnya agar tidak double di terminal
+            process.stdout.moveCursor(0, -1);
+            process.stdout.clearLine(0);
+
+            if (text.toLowerCase() === "exit") {
+                console.log("\x1b[33mKeluar chat...\x1b[0m");
+                isChatActive = false;
+                call.end();
+                if(onExit) onExit();
+                return;
+            }
+            call.write({
+                sender_id: clientId,
+                session_id: sessionId,
+                content: text,
+            });
+            loop();
+        });
+    };
+
+    call.on("data", (msg) => {
+        if (!msg.content && !msg.status) return;
+
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        
+        let formattedMsg;
+        if (msg.sender_id === clientId) {
+            formattedMsg = `\x1b[32m[You]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        } else if (msg.sender_id.startsWith("H")) {
+            formattedMsg = `\x1b[36m[Helper]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        } else if (msg.sender_id === "SYSTEM") {
+            formattedMsg = `\x1b[33m[SYSTEM]\x1b[0m \x1b[93m${msg.content}\x1b[0m`;
+        } else {
+            formattedMsg = `\x1b[32m[Client]\x1b[0m \x1b[97m${msg.content}\x1b[0m`;
+        }
+        
+        if (msg.content) {
+            console.log(formattedMsg);
+        }
+        
+        if (msg.status === "done" || msg.status === "banned") {
+            console.log("\x1b[33mSession selesai dari Server.\x1b[0m");
+            isChatActive = false;
+            call.end();
+            // Force exit the blocked prompt
+            rl.write(null, {ctrl: true, name: 'u'});
+            rl.write('\n');
+        } else {
+            // Tampilkan ulang prompt karena ditimpa log
+            if (isChatActive) {
+                process.stdout.write("\x1b[32mYou:\x1b[0m ");
+            }
+        }
+    });
+
+    loop();
+};
+
+==============================================================================================
 clients/index.js
-const grpc=require('@grpc/grpc-js');
-const protoLoader=require('@grpc/proto-loader');
-const packageDefinition=protoLoader.loadSync([
+import grpc from '@grpc/grpc-js';
+import protoLoader from '@grpc/proto-loader';
+const packageDefinition = protoLoader.loadSync([
   './proto/helper.proto',
   './proto/clients.proto',
-], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
+], { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
+const proto = grpc.loadPackageDefinition(packageDefinition).emergency;
 const centralStub = new proto.ClientService('localhost:50051', grpc.credentials.createInsecure());
-let mylocalprofile={
+export const getStub = () => centralStub;
+export let mylocalprofile = {
   client_id: null,
   phone_num: "089xxxxxxxx"
 };
-let currentSessionId = null;
+export let currentSessionId = null;
 
-function register(phone,callback){
-  const request={
+export function register(phone, callback) {
+  const request = {
     phone_num: phone
   };
   centralStub.Register(request, (err, response) => {
@@ -254,8 +848,8 @@ function register(phone,callback){
   });
 }
 
-function requestEmergency(message,type,callback){
-  const request={
+export function requestEmergency(message, type, callback) {
+  const request = {
     client_id: mylocalprofile.client_id,
     initial_message: message,
   };
@@ -268,7 +862,7 @@ function requestEmergency(message,type,callback){
   });
 }
 
-function cancelEmergency(callback) {
+export function cancelEmergency(callback) {
   if (!currentSessionId) {
     return callback(new Error("Tidak ada sesi aktif yang bisa dibatalkan"), null);
   }
@@ -286,11 +880,11 @@ function cancelEmergency(callback) {
   });
 }
 
-function getCurrentSessionId() {
+export function getCurrentSessionId() {
   return currentSessionId;
 }
 
-function watchMyStatus(onUpdate) {
+export function watchMyStatus(onUpdate) {
   const stream = centralStub.WatchSessionStatus({
     client_id: mylocalprofile.client_id
   });
@@ -302,77 +896,76 @@ function watchMyStatus(onUpdate) {
   stream.on('error', (err) => {
     // Diamkan jika error karena cancel
   });
-  
+
   return stream;
 }
 
-module.exports = { getCurrentSessionId, register, mylocalprofile, requestEmergency, cancelEmergency, currentSessionId, watchMyStatus };
-
-
-
+==============================================================================================
 clients/terminal.js
-const clientService=require('./index.js');
-const readline=require('readline');
+import * as clientService from "./index.js";
+import { setTimeout } from 'node:timers/promises';
+import startChat from "./client_chat.js";
+import readline from "readline";
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
+let clientState = {
+  activeSession: null,
+  currentStatus: "N/A",
+  lastInfo: "-",
+  initialMessage: "-",
+  isBanned: false
+};
 
-function showMainMenu() {
+async function showMainMenu() {
+  console.clear();
+  await setTimeout(200);
   console.log(`\n=== CLIENT DASHBOARD ===`);
   console.log(`ID    : ${clientService.mylocalprofile.client_id}`);
   console.log(`Phone : ${clientService.mylocalprofile.phone_num}`);
+  if (clientState.activeSession) {
+    console.log(`Request : ${clientState.initialMessage}`);
+    console.log(`Status  : [${clientState.currentStatus}] - ${clientState.lastInfo}`);
+  } else {
+    console.log(`Status  : Tidak ada laporan aktif.`);
+  }
   console.log(`------------------------`);
   console.log("1. Minta Bantuan (Emergency)");
-  console.log("2. Cek Status Sesi");
+  console.log("2. Refresh Tampilan");
   console.log("3. Keluar");
   console.log("4. Batalkan Sesi");
-  
+  console.log("5. Masuk ke Chat");
+
   rl.question("\nPilih Menu: ", (choice) => {
     switch (choice) {
       case '1':
+        if (clientState.isBanned) {
+          console.log("\n[!] Gagal: Anda telah diblokir. Tidak dapat meminta bantuan lagi.");
+          return setTimeout(2000).then(showMainMenu);
+        }
+        if (clientState.activeSession) {
+          console.log("\n[!] Gagal: Selesaikan atau batalkan sesi aktif terlebih dahulu.");
+          return setTimeout(1500).then(showMainMenu);
+        }
         rl.question("\nApa keadaan darurat Anda? ", (msg) => {
-          const input = msg.toLowerCase();
-          let type = 3; // Default POLICE (3)
-
-          if (input.includes("kebakaran") || input.includes("api") || input.includes("hangus") || input.includes("asap")) {
-            type = 1; // FIRE
-          } else if (input.includes("kecelakaan") || input.includes("ambulans") || input.includes("sakit") || input.includes("medis") || input.includes("darah")) {
-            type = 2; // MEDICAL
-          }
-
-          const deptName = type === 1 ? "DAMKAR" : type === 2 ? "RUMAH SAKIT" : "POLISI";
-          console.log(`[System] Mengarahkan laporan ke: ${deptName}...`);
-
-          clientService.requestEmergency(msg, type, (err, res) => {
-            if (err || !res || res.status === 'BANNED') {
-              console.log(" Gagal mengirim permintaan atau Anda diblokir.");
+          clientService.requestEmergency(msg, 3, (err, res) => {
+            if (err || !res.session_id) {
+              console.log("\n[!] Gagal mengirim permintaan.");
+              setTimeout(1500).then(showMainMenu);
             } else {
-              console.log(`\n Laporan Terkirim!`);
-              console.log(`Session ID : ${res.session_id}`);
-              console.log(`Petugas    : ${res.routed_to}`);
+              // --- TAMBAHKAN TIGA BARIS INI ---
+              clientState.activeSession = res.session_id;
+              clientState.initialMessage = msg;
+              clientState.currentStatus = "PENDING";
+              // --------------------------------
+
+              showMainMenu();
             }
-            showMainMenu();
           });
         });
         break;
       case '2':
-        console.log("\n[Status] Membuka pemantauan sesi...");
-        
-        // Memulai stream status
-        clientService.watchMyStatus((update) => {
-          const statusNames = ["PENDING", "ONGOING", "DONE", "BANNED"];
-          const currentStatus = statusNames[update.status] || "UNKNOWN";
-          
-          console.log(`\n-------------------------------------------`);
-          console.log(`  UPDATE STATUS: [${currentStatus}]`);
-          console.log(`Sesi: ${update.session_id}`);
-          console.log(`Info: ${update.info}`);
-          console.log(`-------------------------------------------`);
-          process.stdout.write("Pilih Menu: "); // Munculkan prompt lagi agar user tidak bingung
-        });
-        
-        console.log("Sistem akan otomatis memberi tahu jika ada perubahan status.");
         showMainMenu();
         break;
       case '3':
@@ -383,6 +976,7 @@ function showMainMenu() {
         const sessionToCancel = clientService.getCurrentSessionId();
         if (!sessionToCancel) {
           console.log("\n[!] Anda tidak memiliki permintaan aktif.");
+          console.clear();
           return showMainMenu();
         }
 
@@ -394,21 +988,79 @@ function showMainMenu() {
               } else {
                 console.log(`\n  Sesi berhasil dibatalkan.`);
               }
+              console.clear();
               showMainMenu();
             });
           } else {
+            console.clear();
             showMainMenu();
           }
         });
         break;
+      case '5':
+        if (!clientState.activeSession) {
+          console.log("\n[!] Anda tidak memiliki permintaan aktif.");
+          setTimeout(1500).then(showMainMenu);
+        } else {
+          console.clear();
+          startChat(clientService.getStub(), clientService.mylocalprofile.client_id, clientState.activeSession, rl, showMainMenu);
+        }
+        break;
       default:
+        console.clear();
         showMainMenu();
         break;
     }
   });
 }
 
-function startApp(){
+function startStatusWatcher() {
+  clientService.watchMyStatus((update) => {
+    if (update && update.session) {
+      // Mapping untuk menangani Enum yang datang sebagai String atau Number
+      const statusMap = {
+        "PENDING": 0, 0: 0,
+        "ONGOING": 1, 1: 1,
+        "DONE": 2, 2: 2,
+        "BANNED": 3, 3: 3
+      };
+
+      const statusNames = ["PENDING", "ONGOING", "DONE", "BANNED"];
+      const sessionData = update.session;
+
+      // Ambil nilai mentah dari status
+      const rawStatus = sessionData.status !== undefined ? sessionData.status : sessionData.Status;
+
+      // Konversi ke index angka yang pasti (0-3)
+      const statusIndex = statusMap[rawStatus];
+
+      clientState.activeSession = sessionData.session_id || sessionData.session_id;
+
+      // Update status ke dashboard
+      clientState.currentStatus = statusNames[statusIndex] !== undefined ? statusNames[statusIndex] : "UNKNOWN";
+
+      clientState.lastInfo = update.notification || "-";
+
+      if (statusIndex === 3) {
+        clientState.isBanned = true;
+      }
+
+      showMainMenu();
+
+      // Logika pembersihan sesi
+      if (statusIndex === 2 || statusIndex === 3) {
+        setTimeout(5000).then(() => {
+          clientState.activeSession = null;
+          clientState.initialMessage = "-";
+          showMainMenu();
+        });
+      }
+    }
+  });
+}
+
+function startApp() {
+  console.clear();
   console.log("=== PENDAFTARAN CLIENT 911 ===");
   rl.question("Masukkan Nomor Telepon: ", (phone) => {
     if (!phone) {
@@ -416,13 +1068,15 @@ function startApp(){
       return startApp();
     }
     clientService.register(phone, (err, response) => {
-      if(err||!response.success){
+      if (err || !response.success) {
         console.log(`registrasi gagal: ${err ? err.message : response.message}`);
         return startApp();
       }
       console.clear();
       console.log(`Registrasi berhasil`);
       console.log(`Pesan: ${response.message}`);
+      console.clear();
+      startStatusWatcher();
       showMainMenu();
     });
   });
@@ -430,161 +1084,8 @@ function startApp(){
 
 startApp();
 
-
-helper/index.js
-const grpc=require('@grpc/grpc-js');
-const protoLoader=require('@grpc/proto-loader');
-const packageDefinition=protoLoader.loadSync([
-  './proto/helper.proto',
-], {keepCase:true, longs: String, enums: String, defaults: true, oneofs: true});
-const proto=grpc.loadPackageDefinition(packageDefinition).emergency;
-const centralStub = new proto.HelperService('localhost:50051', grpc.credentials.createInsecure());
-const activeSessions = new Map();
-let helperNode = null;
-
-function startHelper(address,onClientAssigned){
-  const helperNode=new grpc.Server();
-  helperNode.addService(proto.HelperService.service, {
-    AssignClient:(call, callback)=>{
-      const {session_id, agent_id}=call.request;
-
-      activeSessions.set(session_id, agent_id);
-
-      if (onClientAssigned) onClientAssigned(session_id);
-
-      callback(null, {
-        success:true,
-        message: "Client assigned to local node",
-        session: { session_id: session_id, status: "ONGOING" }
-      });
-    }
-  });
-  
-  const port = address.split(':')[1];
-  helperNode.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
-    console.log(`Helper server running on ${address}`);
-  });
-}
-
-function login(id,pass,callback){
-  const request={
-    agent_id: id,
-    password: pass,
-  };
-  
-  centralStub.Login(request, (err,response)=>{
-    if (typeof callback === 'function') {
-      callback(err, response);
-    }
-  });
-}
-
-function watchQueue(agentId,dept,onUpdate){
-  const request={
-    agent_id: agentId,
-    department: dept
-  };
-
-  const stream = centralStub.WatchQueue(request);
-
-  stream.on('data', (response) => {
-    if(onUpdate) onUpdate(response);
-  });
-
-  stream.on('error', (err) => {
-    console.error("Stream error:", err);
-  });
-}
-
-module.exports = { login, startHelper, watchQueue };
+==============================================================================================
 
 
-
-helper/terminal.js
-const startHelper=require("./index");
-const readline=require("readline");
-const rl=readline.createInterface({
-  input:process.stdin,
-  output:process.stdout
-});
-const state = {
-  profile: null,
-  sessions: []
-};
-
-function showDashboard() {
-  console.log(`\n=== DASHBOARD AGENT: ${state.profile.name} ===`);
-  console.log(`ID: ${state.profile.agent_id} | Dept: ${state.profile.department}`);
-  console.log(`-------------------------------------------`);
-  console.log(`1. Lihat Daftar Sesi Aktif`);
-  console.log(`2. Chat (Coming Soon)`);
-  console.log(`3. Logout & Exit`);
-  
-  rl.question("\nPilih Menu: ", (choice) => {
-    if (choice === '1') {
-      console.log("\n--- SESI DARURAT SAAT INI ---");
-      if (state.sessions.length === 0) console.log("Tidak ada panggilan aktif.");
-      state.sessions.forEach((s, i) => console.log(`${i+1}. Session ID: ${s}`));
-      showDashboard();
-    } else if (choice === '3') {
-      console.log("Logging out...");
-      process.exit();
-    } else {
-      showDashboard();
-    }
-  });
-}
-
-function startApp() {
-  console.log("=== EMERGENCY SYSTEM LOGIN ===");
-  rl.question("Agent ID   : ", (id) => {
-    rl.question("Password   : ", (pass) => {
-      startHelper.login(id, pass, (err, response) => {
-        if (err || !response.success) {
-          console.log(`\n  LOGIN GAGAL: ${response ? response.message : "Server Down"}`);
-          return startApp();
-        }
-
-        state.profile = response.agent;
-        const address = response.message.match(/localhost:\d+/)[0];
-        
-        startHelper.startHelper(address, (newSessionId) => {
-          state.sessions.push(newSessionId);
-          console.log(`\n\n  PANGGILAN MASUK! ID Sesi: ${newSessionId}`);
-          process.stdout.write("Pilih Menu: "); // Kembalikan prompt menu
-        });
-
-        console.clear();
-        console.log(`  Login Berhasil sebagai ${state.profile.name}`);
-        console.clear();
-        startHelper.watchQueue(state.profile.agent_id, state.profile.department, (update) => {
-          if (update.new_session) {
-            state.sessions.push(update.new_session.session_id);
-            console.log(`\n[QUEUE UPDATE] Ada permintaan baru: ${update.new_session.session_id}`);
-            // Kamu bisa simpan ke state.sessions jika perlu
-          }
-          if (update.PENDING && update.PENDING.length > 0) {
-            update.PENDING.forEach(s => {
-              // Cek agar tidak duplikat
-              if (!state.sessions.includes(s.session_id)) {
-                state.sessions.push(s.session_id);
-              }
-            });
-            console.log(`\n[!] Sinkronisasi: ${update.PENDING.length} laporan dimuat ke daftar.`);
-          }
-          if (update.event && update.event.startsWith("CANCEL_EVENT:")) {
-            const cancelledId = update.event.split(":")[1];
-            console.log(`\n[NOTIF] Sesi ${cancelledId} telah dibatalkan oleh Client.`);
-            // Hapus dari state lokal jika map gagal
-            state.sessions = state.sessions.filter(id => id !== cancelledId);
-            process.stdout.write("Pilih Menu: ");
-          }
-          process.stdout.write("Pilih Menu: ");
-        });
-        showDashboard();
-      });
-    });
-  });
-}
-
-startApp();
+==============================================================================================
+==============================================================================================
