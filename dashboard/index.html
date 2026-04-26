@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>911 DISPATCH — ADMIN DASHBOARD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+ 
+<!-- TOPBAR -->
+<div id="topbar">
+  <div class="logo">
+    <div class="logo-badge">911</div>
+    <div>
+      <div class="logo-title">Dispatch Monitor</div>
+      <div class="logo-sub">Emergency Response Admin Dashboard</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="stat-box">
+      <div class="stat-val" id="stat-helpers">0</div>
+      <div class="stat-lbl">Helpers Online</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-misi">0</div>
+      <div class="stat-lbl">Sedang Misi</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-queue">0</div>
+      <div class="stat-lbl">Total Antrean</div>
+    </div>
+    <div id="conn-status">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span id="conn-text">DISCONNECTED</span>
+    </div>
+    <div id="time">--:--:--</div>
+  </div>
+</div>
+ 
+<!-- MAIN AREA -->
+<div id="main">
+ 
+  <!-- HELPER PANEL -->
+  <div id="helpers-panel">
+    <div class="panel-head">
+      <h2>Active Helpers</h2>
+      <span class="badge" id="helper-badge">0</span>
+    </div>
+    <div id="helpers-list"></div>
+    <div class="empty-helpers" id="helpers-empty">
+      <div class="empty-icon">📡</div>
+      <div>MENUNGGU HELPER LOGIN...</div>
+    </div>
+  </div>
+ 
+  <!-- QUEUE PANEL -->
+  <div id="queue-panel">
+    <div class="panel-head">
+      <h2>Queue Monitor</h2>
+      <span class="badge" id="queue-badge">REAL-TIME</span>
+    </div>
+    <div id="queue-container">
+      <div class="queue-col q-FIRE" id="col-FIRE">
+        <div class="queue-header">
+          <div class="queue-title">🔥 Fire</div>
+          <div class="queue-count" id="cnt-FIRE">0</div>
+        </div>
+        <div class="queue-bar"></div>
+        <div id="list-FIRE"></div>
+      </div>
+      <div class="queue-col q-MEDICAL" id="col-MEDICAL">
+        <div class="queue-header">
+          <div class="queue-title">🏥 Medical</div>
+          <div class="queue-count" id="cnt-MEDICAL">0</div>
+        </div>
+        <div class="queue-bar"></div>
+        <div id="list-MEDICAL"></div>
+      </div>
+      <div class="queue-col q-POLICE" id="col-POLICE">
+        <div class="queue-header">
+          <div class="queue-title">🚔 Police</div>
+          <div class="queue-count" id="cnt-POLICE">0</div>
+        </div>
+        <div class="queue-bar"></div>
+        <div id="list-POLICE"></div>
+      </div>
+    </div>
+  </div>
+</div>
+ 
+<!-- CHAT MONITOR MODAL -->
+<div id="chat-overlay">
+  <div id="chat-modal">
+    <div id="chat-modal-head">
+      <div>
+        <div id="chat-modal-title">
+          <span class="watching-dot"></span>
+          <span id="chat-modal-title-text">MEMANTAU CHAT</span>
+        </div>
+        <div id="chat-modal-sub"></div>
+      </div>
+      <button id="chat-close">✕ TUTUP</button>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-footer">
+      <span class="watching-dot"></span>
+      <span id="chat-footer-text">Menonton secara real-time &mdash; pesan baru akan muncul otomatis</span>
+    </div>
+  </div>
+</div>
+ 
+<!-- LOG TICKER -->
+<div id="log-bar">
+  <span id="log-label">LOG ▶</span>
+  <span id="log-content">Menghubungkan ke server...</span>
+</div>
+ 
+<script src="script.js"></script>
+</body>
+</html>
