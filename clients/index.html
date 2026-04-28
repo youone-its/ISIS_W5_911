@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>911 EMERGENCY — CITIZEN PORTAL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="logo">
+    <div class="logo-badge">911</div>
+    <div>
+      <div class="logo-title">Emergency Portal</div>
+      <div class="logo-sub">Citizen Quick Response System</div>
+    </div>
+  </div>
+  <div id="conn-status">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-text">DISCONNECTED</span>
+  </div>
+</div>
+
+<div id="main">
+  <!-- REGISTRATION VIEW -->
+  <div id="view-reg" class="view active">
+    <div class="portal-card">
+      <h2>IDENTIFIKASI PENGGUNA</h2>
+      <p class="instr">Masukkan nomor telepon aktif Anda untuk mengakses layanan darurat.</p>
+      <div class="input-group">
+        <label>NOMOR TELEPON</label>
+        <input type="text" id="reg-phone" placeholder="Contoh: 08123456789" maxlength="15"/>
+      </div>
+      <button id="btn-register" class="btn-primary">MASUK KE SISTEM</button>
+      <div id="reg-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- REQUEST VIEW -->
+  <div id="view-request" class="view">
+    <div class="portal-card">
+      <div class="user-info">
+        <span id="user-id">ID: --</span>
+        <span id="user-phone">PH: --</span>
+      </div>
+      <h2>LAPORKAN DARURAT</h2>
+      <p class="instr">Jelaskan situasi Anda secara singkat. Tim kami akan segera merespons.</p>
+      <div class="input-group">
+        <label>DESKRIPSI KEJADIAN</label>
+        <textarea id="req-msg" placeholder="Apa yang terjadi? (Kebakaran, Kecelakaan, Kriminalitas...)" rows="4"></textarea>
+      </div>
+      <button id="btn-request" class="btn-danger">KIRIM SINYAL DARURAT</button>
+      <div id="req-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- STATUS / CHAT VIEW -->
+  <div id="view-status" class="view">
+    <div class="status-panel">
+      <div class="status-header">
+        <div class="sh-left">
+          <div class="sh-title">STATUS LAPORAN</div>
+          <div id="sh-sid" class="sh-sid">SESSION: --</div>
+        </div>
+        <div id="sh-badge" class="status-badge s0">PENDING</div>
+      </div>
+      
+      <div id="status-notification" class="status-notif">
+        Menunggu respons petugas...
+      </div>
+
+      <div id="chat-box" class="chat-disabled">
+        <div id="chat-messages"></div>
+        <div class="chat-input-area">
+          <input type="text" id="chat-input" placeholder="Ketik pesan..." disabled/>
+          <button id="btn-send" disabled>KIRIM</button>
+        </div>
+      </div>
+
+      <button id="btn-cancel" class="btn-outline">BATALKAN LAPORAN</button>
+      <button id="btn-return" class="btn-primary" style="display:none; margin: 15px 20px 20px; width: calc(100% - 40px);">LAPORAN BARU</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY FOR LOADING/SYNC -->
+<div id="overlay">
+  <div class="spinner"></div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

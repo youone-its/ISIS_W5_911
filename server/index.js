@@ -54,9 +54,13 @@ const chatStreamHandler = (call) => {
     // Broadcast ke semua gRPC stream dalam sesi ini
     if (msg.content || msg.status) {
       chatSessions.get(currentSessionId).forEach(c => {
-        c.write(msg);
+        try {
+          c.write(msg);
+        } catch (e) {
+          console.error(`[gRPC Chat Write Error]: ${e.message}`);
+        }
       });
-      if (msg.content) wsDashboard.onChatMessage(currentSessionId, msg); // [WS] forward pesan ke dashboard
+      if (msg.content) wsDashboard.onChatMessage(currentSessionId, msg); 
     }
   });
  
@@ -146,10 +150,14 @@ server.addService(proto.ClientService.service, {
       const targetDept = (type === "FIRE") ? 1 : (type === "MEDICAL") ? 2 : 3;
       if (helper.department === targetDept) {
         console.log(`[Stream] Mengirim update ke Helper ID: ${id}`);
-        helper.stream.write({
-          new_session: newSession,
-          event: `Ada panggilan baru di kategori ${type}!`
-        });
+        try {
+          helper.stream.write({
+            new_session: newSession,
+            event: `Ada panggilan baru di kategori ${type}!`
+          });
+        } catch (e) {
+          console.error(`[gRPC Helper Notify Error]: ${e.message}`);
+        }
       }
     });
  
@@ -180,6 +188,11 @@ server.addService(proto.ClientService.service, {
     call.on('cancelled', () => {
       clientStatusStreams.delete(client_id);
     });
+
+    call.on('error', (err) => {
+      console.error(`[Stream Error] Client ${client_id}: ${err.message}`);
+      clientStatusStreams.delete(client_id);
+    });
   },
  
   CancelEmergency: (call, callback) => {
@@ -203,10 +216,14 @@ server.addService(proto.ClientService.service, {
       const deptNum = (targetDept === "FIRE") ? 1 : (targetDept === "MEDICAL") ? 2 : 3;
       helperStreams.forEach((helper, agent_id) => {
         if (helper.department == deptNum) {
-          helper.stream.write({
-            event: `CANCEL_EVENT:${session_id}`,
-            PENDING: queues[targetDept]
-          });
+          try {
+            helper.stream.write({
+              event: `CANCEL_EVENT:${session_id}`,
+              PENDING: queues[targetDept]
+            });
+          } catch (e) {
+            console.error(`[gRPC Helper Cancel Notify Error]: ${e.message}`);
+          }
         }
       });
  
@@ -293,6 +310,13 @@ server.addService(proto.HelperService.service, {
       wsDashboard.onHelperLogout(agent_id); // [WS] stream terputus paksa → hapus card dari dashboard
       console.log(`[Stream] Helper ${agent_id} stopped watching.`);
     });
+
+    call.on('error', (err) => {
+      console.error(`[Stream Error] Helper ${agent_id}: ${err.message}`);
+      helperStreams.delete(agent_id);
+      loggedInHelpers.delete(agent_id);
+      wsDashboard.onHelperLogout(agent_id);
+    });
   },
  
   UpdateSessionStatus: (call, callback) => {
@@ -345,15 +369,18 @@ server.addService(proto.HelperService.service, {
       });
     }
  
-    // 4. Jika status DONE atau BANNED, baru hapus
-    if (statusInt === 2 || statusInt === 3) { // FIX: pakai statusInt bukan status mentah (bisa string dari gRPC)
+    if (statusInt === 2 || statusInt === 3) { 
       if (chatSessions.has(session_id)) {
         chatSessions.get(session_id).forEach(c => {
-          c.write({
-            sender_id: "SYSTEM",
-            content: statusInt === 3 ? "Laporan telah diblokir." : "Sesi telah ditutup oleh agen.",
-            status: statusInt === 2 ? "done" : "banned"
-          });
+          try {
+            c.write({
+              sender_id: "SYSTEM",
+              content: statusInt === 3 ? "Laporan telah diblokir." : "Sesi telah ditutup oleh agen.",
+              status: statusInt === 2 ? "done" : "banned"
+            });
+          } catch (e) {
+            console.error(`[gRPC Status Write Error]: ${e.message}`);
+          }
         });
         chatSessions.delete(session_id);
       }
@@ -369,7 +396,19 @@ server.addService(proto.HelperService.service, {
       }
       activeSessionsByClient.delete(targetClientId);
       for (let dept in queues) {
+        const origLen = queues[dept].length;
         queues[dept] = queues[dept].filter(s => s.session_id !== session_id);
+        if (queues[dept].length < origLen) {
+          const deptNum = (dept === "FIRE") ? 1 : (dept === "MEDICAL") ? 2 : 3;
+          helperStreams.forEach((helper, h_agent_id) => {
+            if (helper.department == deptNum) {
+              helper.stream.write({
+                event: `END_EVENT:${session_id}`,
+                PENDING: queues[dept]
+              });
+            }
+          });
+        }
       }
     }
  

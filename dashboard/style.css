@@ -225,6 +225,14 @@ body::after{
 }
 .qi-status.s0{color:var(--amber)}
 .qi-status.s1{color:var(--luang)}
+.action-btn{
+  margin-left:8px;padding:3px 8px;background:var(--surface2);
+  border:1px solid var(--border2);color:var(--text);
+  font-family:var(--font-mono);font-size:10px;
+  cursor:pointer;letter-spacing:1px;transition:all .15s;
+}
+.btn-assign:hover{background:rgba(34,212,106,.12);border-color:rgba(34,212,106,.4);color:var(--luang)}
+.btn-end:hover{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);color:var(--danger)}
 .empty-queue{
   text-align:center;padding:20px;
   font-family:var(--font-mono);font-size:12px;

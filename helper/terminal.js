@@ -140,7 +140,16 @@ function startApp() {
             showDashboard();
           }
 
-          if (!update.new_session && !(update.event && update.event.startsWith("CANCEL_EVENT:"))) {
+          if (update.event && update.event.startsWith("END_EVENT:")) {
+            const endedId = update.event.split(":")[1];
+            console.log(`\n[NOTIF] Sesi ${endedId} telah selesai/ditutup dari Web.`);
+            state.sessions = state.sessions.filter(id => id !== endedId);
+            await setTimeout(1000);
+            console.clear();
+            showDashboard();
+          }
+
+          if (!update.new_session && !(update.event && (update.event.startsWith("CANCEL_EVENT:") || update.event.startsWith("END_EVENT:")))) {
             process.stdout.write("Pilih Menu: ");
           }
         });

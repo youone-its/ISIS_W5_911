@@ -16,6 +16,7 @@
     ws.onopen = function () {
       setConnected(true);
       pushLog('Koneksi dashboard berhasil');
+      send({ type: 'SYNC', role: 'admin' });
     };
  
     ws.onclose = function () {
@@ -39,7 +40,10 @@
   }
  
   function send(obj) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    if (ws && ws.readyState === 1) {
+      obj.role = 'admin';
+      ws.send(JSON.stringify(obj));
+    }
   }
  
   // ── PACKET HANDLER ─────────────────────────────────────────────────────────
@@ -266,14 +270,59 @@
         const el  = document.createElement('div');
         el.className = 'queue-item';
         const st = typeof s.status === 'number' ? s.status : 0;
+        
+        let actionBtn = '';
+        if (st === 0) {
+          actionBtn = '<button class="action-btn btn-assign" data-sid="' + s.session_id + '" data-dept="' + dept + '">ASSIGN</button>';
+        } else if (st === 1) {
+          actionBtn = '<button class="action-btn btn-end" data-sid="' + s.session_id + '">END</button>';
+        }
+
         el.innerHTML =
           '<div class="qi-sid">' + (s.session_id || '-') + '</div>' +
           '<div class="qi-client">CLIENT: ' + (s.client_id || '-') + '</div>' +
           '<div class="qi-msg">' + (s.initial_message || '-') + '</div>' +
           '<div class="qi-status ' + (statusClass[st] || 's0') + '">' +
-            (statusLabels[st] || '● PENDING') +
+            (statusLabels[st] || '● PENDING') + actionBtn +
           '</div>';
         listEl.appendChild(el);
+      });
+    });
+
+    // Attach event listeners for Command & Control Bridge
+    document.querySelectorAll('.btn-assign').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const sid = this.getAttribute('data-sid');
+        const dept = this.getAttribute('data-dept');
+        // Cari helper yang nganggur di departemen yang sama
+        const hArr = [...helpers.values()];
+        const available = hArr.find(h => h.department === dept && h.status === 'LUANG');
+        if (!available) {
+          alert('Tidak ada helper LUANG di departemen ' + dept);
+          return;
+        }
+        if (confirm('Assign ke helper ' + available.name + ' (' + available.agent_id + ')?')) {
+          send({
+            type: 'COMMAND',
+            action: 'ASSIGN_SESSION',
+            payload: { session_id: sid, agent_id: available.agent_id }
+          });
+          pushLog('Kirim instruksi ASSIGN_SESSION (' + sid + ' -> ' + available.agent_id + ')');
+        }
+      });
+    });
+
+    document.querySelectorAll('.btn-end').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const sid = this.getAttribute('data-sid');
+        if (confirm('Akhiri sesi ' + sid + '?')) {
+          send({
+            type: 'COMMAND',
+            action: 'END_SESSION',
+            payload: { session_id: sid }
+          });
+          pushLog('Kirim instruksi END_SESSION (' + sid + ')');
+        }
       });
     });
   }
